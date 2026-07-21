@@ -1,0 +1,9 @@
+[project]
+name = "brothers"
+version = "0.1.0"
+description = "Brothers for Selling Carpet - offline shop management system"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

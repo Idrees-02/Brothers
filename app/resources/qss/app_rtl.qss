@@ -1,0 +1,68 @@
+/* Base stylesheet for the RTL Arabic UI. Qt auto-mirrors most layouts when
+   QApplication.layoutDirection() is RightToLeft, so avoid hardcoding
+   left/right margins here - use logical properties where Qt supports them. */
+
+QWidget {
+    font-size: 14px;
+}
+
+QMainWindow, QDialog {
+    background-color: #f4f5f7;
+}
+
+QPushButton {
+    padding: 6px 16px;
+    border-radius: 4px;
+    background-color: #2f6f4f;
+    color: white;
+    border: none;
+}
+
+QPushButton:hover {
+    background-color: #26593f;
+}
+
+QPushButton:disabled {
+    background-color: #a9a9a9;
+}
+
+QPushButton#dangerButton {
+    background-color: #a63d3d;
+}
+
+QPushButton#dangerButton:hover {
+    background-color: #832f2f;
+}
+
+QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox, QDateEdit, QTextEdit {
+    padding: 4px 6px;
+    border: 1px solid #c7c9cc;
+    border-radius: 4px;
+    background-color: white;
+}
+
+QListWidget#navList {
+    background-color: #223326;
+    color: white;
+    border: none;
+    padding-top: 8px;
+}
+
+QListWidget#navList::item {
+    padding: 10px 14px;
+}
+
+QListWidget#navList::item:selected {
+    background-color: #2f6f4f;
+}
+
+QTableWidget {
+    gridline-color: #dcdde0;
+    background-color: white;
+}
+
+QHeaderView::section {
+    background-color: #e8e9ec;
+    padding: 6px;
+    border: none;
+}
