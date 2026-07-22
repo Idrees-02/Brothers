@@ -24,8 +24,9 @@ from PySide6.QtWidgets import (
 
 from app.repositories import accounts_repo, settings_repo, users_repo
 from app.services import settings_service
-from app.ui.widgets.money_spinbox import MoneySpinBox
 from app.ui.settings.user_form import UserFormDialog
+from app.ui.widgets.card import Card
+from app.ui.widgets.money_spinbox import MoneySpinBox
 
 
 class SettingsScreen(QWidget):
@@ -47,8 +48,8 @@ class SettingsScreen(QWidget):
 
     # ---------------------------------------------------------------- users
     def _build_users_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        tab = Card()
+        layout = tab.body_layout
 
         self.users_table = QTableWidget(0, 4)
         self.users_table.setHorizontalHeaderLabels(["اسم المستخدم", "الاسم المعروض", "مدير", "نشط"])
@@ -137,8 +138,8 @@ class SettingsScreen(QWidget):
 
     # ----------------------------------------------------------- financial
     def _build_financial_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        tab = Card()
+        layout = tab.body_layout
         form = QFormLayout()
 
         settings = settings_repo.get_settings(self._conn)
@@ -183,8 +184,8 @@ class SettingsScreen(QWidget):
 
     # ------------------------------------------------------------ accounts
     def _build_accounts_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        tab = Card()
+        layout = tab.body_layout
 
         self.accounts_table = QTableWidget(0, 2)
         self.accounts_table.setHorizontalHeaderLabels(["اسم الحساب", "نشط"])
@@ -240,8 +241,8 @@ class SettingsScreen(QWidget):
 
     # ----------------------------------------------------------- override
     def _build_override_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        tab = Card()
+        layout = tab.body_layout
         form = QFormLayout()
 
         self.override_password_input = QLineEdit()
@@ -267,8 +268,8 @@ class SettingsScreen(QWidget):
 
     # ---------------------------------------------------------------- shop
     def _build_shop_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        tab = Card()
+        layout = tab.body_layout
         form = QFormLayout()
 
         settings = settings_repo.get_settings(self._conn)

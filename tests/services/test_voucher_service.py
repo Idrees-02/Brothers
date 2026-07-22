@@ -19,7 +19,7 @@ def test_create_expense(conn):
     rows = vouchers_repo.list_expenses(conn)
     assert len(rows) == 1
     assert rows[0]["id"] == expense_id
-    assert rows[0]["voucher_no"] == "EXP-000001"
+    assert rows[0]["voucher_no"] == "E-1"
     assert rows[0]["account_id"] == account_id
 
 
@@ -32,7 +32,7 @@ def test_create_receipt(conn):
     rows = vouchers_repo.list_receipts(conn)
     assert len(rows) == 1
     assert rows[0]["id"] == receipt_id
-    assert rows[0]["voucher_no"] == "REC-000001"
+    assert rows[0]["voucher_no"] == "R-1"
     assert rows[0]["account_id"] == account_id
 
 

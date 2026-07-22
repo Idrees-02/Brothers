@@ -61,8 +61,8 @@ class InvoicesScreen(QWidget):
         self._refresh_navigator_for_current(header["invoice_no"])
 
     def _refresh_next_number_preview(self) -> None:
-        next_no = settings_repo.get_settings(self._conn)["next_invoice_no"]
-        self.navigator.set_current_number(str(next_no))
+        next_no = settings_repo.preview_next_number(self._conn, "invoice", "cash")
+        self.navigator.set_current_number(next_no)
         has_any = invoices_repo.list_all_invoices(self._conn) != []
         self.navigator.set_navigation_enabled(has_any, False)
         self.navigator.set_print_enabled(False)

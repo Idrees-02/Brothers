@@ -86,3 +86,16 @@ def get_adjacent_id(conn: sqlite3.Connection, current_id: int, direction: str) -
             "SELECT id FROM stock_movements WHERE id > ? ORDER BY id ASC LIMIT 1", (current_id,)
         ).fetchone()
     return row["id"] if row else None
+
+
+def get_most_recent_movement_id(conn: sqlite3.Connection, movement_type: str) -> int | None:
+    """Latest manual (non-voided, non-sale) movement of the given type, by
+    creation order - used to jump straight to the latest voucher from a
+    blank "new voucher" state."""
+    row = conn.execute(
+        """SELECT id FROM stock_movements
+           WHERE movement_type = ? AND source = 'manual' AND voided_at IS NULL
+           ORDER BY id DESC LIMIT 1""",
+        (movement_type,),
+    ).fetchone()
+    return row["id"] if row else None

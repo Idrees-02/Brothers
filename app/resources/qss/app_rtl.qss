@@ -35,15 +35,32 @@ QLabel#loginTitle {
 }
 
 /* ---------------------------------------------------------------- cards */
+/* Transparent (not solid white) so the shared background watermark shows
+   through on every page - a bold, clearly-visible border keeps each card
+   reading as a distinct box even without a solid fill behind it. */
 QFrame#card {
-    background-color: #ffffff;
+    background-color: transparent;
     {{CARD_WATERMARK_CSS}}
-    border: 1px solid #e1e5ef;
+    border: 2px solid #b6c0dd;
     border-radius: 12px;
 }
 
+/* Cards with the watermark explicitly disabled (currently just the small
+   dashboard date/greeting header - too little room for the logo to read as
+   anything but clutter) are solid white instead of transparent, since they
+   don't need to reveal anything behind them. */
 QFrame#card[watermark="off"] {
+    background-color: #ffffff;
     background-image: none;
+}
+
+/* Lets the page scroll instead of squeezing content into a fixed height -
+   see app/ui/widgets/card.py::scrollable(). Targets the scroll area itself
+   and its internal viewport widget (QAbstractScrollArea always wraps its
+   content in one) so both paint transparent, revealing the Card underneath. */
+QScrollArea#transparentScrollArea, QScrollArea#transparentScrollArea > QWidget {
+    background: transparent;
+    border: none;
 }
 
 QFrame#dashboardStatCard {
@@ -317,7 +334,7 @@ QTabWidget::pane {
 
 QTabBar::tab {
     background: transparent;
-    color: #6b7590;
+    color: #152a5c;
     padding: 10px 18px;
     font-weight: 600;
     border-bottom: 2px solid transparent;

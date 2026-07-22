@@ -26,8 +26,19 @@ def test_reserve_next_number_invoices_share_one_plain_sequence(conn):
     assert second_cash == "3"
 
 
-def test_reserve_next_number_vouchers_keep_their_prefix(conn):
+def test_reserve_next_number_vouchers_use_single_letter_plain_number(conn):
     first_expense = settings_repo.reserve_next_number(conn, "voucher", "expense")
     second_expense = settings_repo.reserve_next_number(conn, "voucher", "expense")
-    assert first_expense == "EXP-000001"
-    assert second_expense == "EXP-000002"
+    assert first_expense == "E-1"
+    assert second_expense == "E-2"
+
+    assert settings_repo.reserve_next_number(conn, "voucher", "receipt") == "R-1"
+    assert settings_repo.reserve_next_number(conn, "voucher", "stock_in") == "I-1"
+    assert settings_repo.reserve_next_number(conn, "voucher", "stock_out") == "O-1"
+
+
+def test_preview_next_number_does_not_reserve(conn):
+    assert settings_repo.preview_next_number(conn, "voucher", "expense") == "E-1"
+    assert settings_repo.preview_next_number(conn, "voucher", "expense") == "E-1"  # unchanged - not reserved
+    assert settings_repo.reserve_next_number(conn, "voucher", "expense") == "E-1"
+    assert settings_repo.preview_next_number(conn, "voucher", "expense") == "E-2"

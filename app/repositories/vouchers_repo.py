@@ -59,6 +59,14 @@ def get_adjacent_expense_id(conn: sqlite3.Connection, current_id: int, direction
     return row["id"] if row else None
 
 
+def get_most_recent_expense_id(conn: sqlite3.Connection) -> int | None:
+    """By creation order (id), not expense_date - matches get_adjacent_expense_id's
+    ordering, used to jump straight to the latest voucher from a blank "new
+    voucher" state."""
+    row = conn.execute("SELECT id FROM expenses ORDER BY id DESC LIMIT 1").fetchone()
+    return row["id"] if row else None
+
+
 def update_expense(conn: sqlite3.Connection, expense_id: int, **fields) -> None:
     """Does not commit - callers wrap this in their own transaction."""
     set_clauses = [f"{key} = ?" for key in fields]
@@ -116,6 +124,14 @@ def get_adjacent_receipt_id(conn: sqlite3.Connection, current_id: int, direction
         row = conn.execute(
             "SELECT id FROM receipts WHERE id > ? ORDER BY id ASC LIMIT 1", (current_id,)
         ).fetchone()
+    return row["id"] if row else None
+
+
+def get_most_recent_receipt_id(conn: sqlite3.Connection) -> int | None:
+    """By creation order (id), not receipt_date - matches get_adjacent_receipt_id's
+    ordering, used to jump straight to the latest voucher from a blank "new
+    voucher" state."""
+    row = conn.execute("SELECT id FROM receipts ORDER BY id DESC LIMIT 1").fetchone()
     return row["id"] if row else None
 
 

@@ -106,8 +106,8 @@ def test_voucher_numbers_are_sequential_per_kind(conn):
         conn, admin, item_id=item_id, quantity=1, movement_date="2026-01-01",
         override_password_prompt=lambda: None,
     )
-    assert stock_repo.get_movement(conn, id1)["voucher_no"] == "STIN-000001"
-    assert stock_repo.get_movement(conn, id2)["voucher_no"] == "STIN-000002"
+    assert stock_repo.get_movement(conn, id1)["voucher_no"] == "I-1"
+    assert stock_repo.get_movement(conn, id2)["voucher_no"] == "I-2"
 
 
 def test_selling_an_inventory_linked_item_decrements_stock(conn):

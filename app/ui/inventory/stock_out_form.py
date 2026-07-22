@@ -133,11 +133,14 @@ class StockOutFormScreen(QWidget):
 
         self._rows: list[sqlite3.Row] = []
         self._refresh_table()
+        self._refresh_next_number_preview()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self.item_combo.refresh()
         self._refresh_table()
+        if self._browsed_id is None:
+            self._refresh_next_number_preview()
 
     def _on_reason_changed(self, text: str) -> None:
         self.custom_reason_input.setVisible(text == _OTHER_REASON)
@@ -188,6 +191,7 @@ class StockOutFormScreen(QWidget):
                 self._print_voucher(new_id)
             self._reset_form()
             self._dirty_tracker.mark_clean()
+            self._refresh_next_number_preview()
         else:
             try:
                 update_movement_note(
@@ -205,6 +209,13 @@ class StockOutFormScreen(QWidget):
                 self._print_voucher(self._browsed_id)
             self._load_voucher(self._browsed_id)
         self._refresh_table()
+
+    def _refresh_next_number_preview(self) -> None:
+        next_no = settings_repo.preview_next_number(self._conn, "voucher", "stock_out")
+        self.navigator.set_current_number(next_no)
+        has_any = stock_repo.get_most_recent_movement_id(self._conn, "out") is not None
+        self.navigator.set_navigation_enabled(has_any, False)
+        self.navigator.set_print_enabled(self._last_created_id is not None)
 
     def _reset_form(self) -> None:
         self.quantity_input.setValue(1)
@@ -253,14 +264,19 @@ class StockOutFormScreen(QWidget):
         self.date_input.setEnabled(True)
         self.save_button.setText("حفظ سند الإخراج")
         self.new_voucher_button.setEnabled(False)
-        self.navigator.set_current_number(None)
-        self.navigator.set_navigation_enabled(False, False)
-        self.navigator.set_print_enabled(self._last_created_id is not None)
         self._reset_form()
         self._dirty_tracker.mark_clean()
+        self._refresh_next_number_preview()
 
     def _go_previous(self) -> None:
-        if self._browsed_id is None or not self._dirty_tracker.confirm_discard():
+        if not self._dirty_tracker.confirm_discard():
+            return
+        if self._browsed_id is None:
+            # Browsing from the blank "new voucher" preview - jump to the
+            # most recently created voucher instead of doing nothing.
+            most_recent = stock_repo.get_most_recent_movement_id(self._conn, "out")
+            if most_recent is not None:
+                self._load_voucher(most_recent)
             return
         adjacent = stock_repo.get_adjacent_id(self._conn, self._browsed_id, "previous")
         if adjacent is not None:
@@ -272,6 +288,18 @@ class StockOutFormScreen(QWidget):
         adjacent = stock_repo.get_adjacent_id(self._conn, self._browsed_id, "next")
         if adjacent is not None:
             self._load_voucher(adjacent)
+        else:
+            # Walked past the most recent voucher - back to the "new
+            # voucher" preview state.
+            self._browsed_id = None
+            self.item_combo.setEnabled(True)
+            self.quantity_input.setEnabled(True)
+            self.date_input.setEnabled(True)
+            self.save_button.setText("حفظ سند الإخراج")
+            self.new_voucher_button.setEnabled(False)
+            self._reset_form()
+            self._dirty_tracker.mark_clean()
+            self._refresh_next_number_preview()
 
     def _jump_to_number(self, voucher_no: str) -> None:
         if not voucher_no or not self._dirty_tracker.confirm_discard():

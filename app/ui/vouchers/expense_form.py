@@ -128,6 +128,7 @@ class ExpenseFormScreen(QWidget):
 
         self._filtered_rows: list[sqlite3.Row] = []
         self._refresh_table()
+        self._refresh_next_number_preview()
 
     # ------------------------------------------------------------- saving
     def _save(self) -> None:
@@ -177,9 +178,17 @@ class ExpenseFormScreen(QWidget):
         if self._browsed_id is None:
             self._reset_form()
             self._dirty_tracker.mark_clean()
+            self._refresh_next_number_preview()
         else:
             self._load_voucher(new_id)
         self._refresh_table()
+
+    def _refresh_next_number_preview(self) -> None:
+        next_no = settings_repo.preview_next_number(self._conn, "voucher", "expense")
+        self.navigator.set_current_number(next_no)
+        has_any = vouchers_repo.get_most_recent_expense_id(self._conn) is not None
+        self.navigator.set_navigation_enabled(has_any, False)
+        self.navigator.set_print_enabled(self._last_created_id is not None)
 
     def _reset_form(self) -> None:
         self.description_input.clear()
@@ -218,27 +227,39 @@ class ExpenseFormScreen(QWidget):
         self._browsed_id = None
         self.save_button.setText("حفظ سند الصرف")
         self.new_voucher_button.setEnabled(False)
-        self.navigator.set_current_number(None)
-        self.navigator.set_navigation_enabled(False, False)
-        self.navigator.set_print_enabled(self._last_created_id is not None)
         self._reset_form()
         self._dirty_tracker.mark_clean()
+        self._refresh_next_number_preview()
 
     def _go_previous(self) -> None:
-        current = self._browsed_id
-        if current is None or not self._dirty_tracker.confirm_discard():
+        if not self._dirty_tracker.confirm_discard():
             return
-        adjacent = vouchers_repo.get_adjacent_expense_id(self._conn, current, "previous")
+        if self._browsed_id is None:
+            # Browsing from the blank "new voucher" preview - jump to the
+            # most recently created voucher instead of doing nothing.
+            most_recent = vouchers_repo.get_most_recent_expense_id(self._conn)
+            if most_recent is not None:
+                self._load_voucher(most_recent)
+            return
+        adjacent = vouchers_repo.get_adjacent_expense_id(self._conn, self._browsed_id, "previous")
         if adjacent is not None:
             self._load_voucher(adjacent)
 
     def _go_next(self) -> None:
-        current = self._browsed_id
-        if current is None or not self._dirty_tracker.confirm_discard():
+        if self._browsed_id is None or not self._dirty_tracker.confirm_discard():
             return
-        adjacent = vouchers_repo.get_adjacent_expense_id(self._conn, current, "next")
+        adjacent = vouchers_repo.get_adjacent_expense_id(self._conn, self._browsed_id, "next")
         if adjacent is not None:
             self._load_voucher(adjacent)
+        else:
+            # Walked past the most recent voucher - back to the "new
+            # voucher" preview state.
+            self._browsed_id = None
+            self.save_button.setText("حفظ سند الصرف")
+            self.new_voucher_button.setEnabled(False)
+            self._reset_form()
+            self._dirty_tracker.mark_clean()
+            self._refresh_next_number_preview()
 
     def _jump_to_number(self, voucher_no: str) -> None:
         if not voucher_no or not self._dirty_tracker.confirm_discard():

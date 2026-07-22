@@ -19,11 +19,11 @@ _COUNTER_COLUMN = {
 _PREFIX = {
     ("invoice", "cash"): "",
     ("invoice", "installation"): "",
-    ("voucher", "expense"): "EXP",
+    ("voucher", "expense"): "E",
     ("voucher", "purchase"): "PUR",
-    ("voucher", "receipt"): "REC",
-    ("voucher", "stock_in"): "STIN",
-    ("voucher", "stock_out"): "STOUT",
+    ("voucher", "receipt"): "R",
+    ("voucher", "stock_in"): "I",
+    ("voucher", "stock_out"): "O",
 }
 
 
@@ -66,10 +66,26 @@ def update_override_password(conn: sqlite3.Connection, password_hash: str) -> No
     conn.commit()
 
 
+def _format_number(prefix: str, value: int) -> str:
+    return str(value) if not prefix else f"{prefix}-{value}"
+
+
+def preview_next_number(conn: sqlite3.Connection, kind: str, subtype: str) -> str:
+    """Formats the counter's current value WITHOUT incrementing/reserving it
+    - used to show "this is the number a new record will get" before the
+    user has actually saved anything (e.g. a voucher/invoice form opening
+    with its next number already filled in)."""
+    column = _COUNTER_COLUMN[(kind, subtype)]
+    prefix = _PREFIX[(kind, subtype)]
+    row = conn.execute(f"SELECT {column} FROM settings WHERE id = 1").fetchone()
+    return _format_number(prefix, row[0])
+
+
 def reserve_next_number(conn: sqlite3.Connection, kind: str, subtype: str) -> str:
     """Atomically increments and returns a formatted sequential number, e.g.
-    reserve_next_number(conn, "voucher", "expense") -> "EXP-000123". Invoices
-    have no prefix (kind/subtype pairs mapping to an empty _PREFIX entry) -
+    reserve_next_number(conn, "voucher", "expense") -> "E-123" (a single
+    letter + a plain unpadded number). Invoices have no prefix at all
+    (kind/subtype pairs mapping to an empty _PREFIX entry) -
     reserve_next_number(conn, "invoice", "cash") -> "1", "2", "3", ...
     kind is "invoice" or "voucher"; subtype is "cash"/"installation" or
     "expense"/"purchase"/etc. respectively.
@@ -80,6 +96,4 @@ def reserve_next_number(conn: sqlite3.Connection, kind: str, subtype: str) -> st
     current = row[0]
     conn.execute(f"UPDATE settings SET {column} = ? WHERE id = 1", (current + 1,))
     conn.commit()
-    if not prefix:
-        return str(current)
-    return f"{prefix}-{current:06d}"
+    return _format_number(prefix, current)
