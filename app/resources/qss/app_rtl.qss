@@ -101,6 +101,12 @@ QLabel#dashboardStatValue {
     color: #152a5c;
 }
 
+QLabel#dashboardTitleLabel {
+    font-size: 40px;
+    font-weight: 800;
+    color: #152a5c;
+}
+
 QPushButton#carouselArrow {
     background: transparent;
     color: #152a5c;
