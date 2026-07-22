@@ -35,24 +35,12 @@ from app.repositories import invoices_repo, settings_repo
 from app.services import invoice_service
 from app.ui.invoices.invoice_print import export_invoice_pdf
 from app.ui.widgets.card import Card, scrollable
+from app.ui.widgets.compact_form import labeled_field as _labeled
 from app.ui.widgets.dirty_tracker import DirtyTracker
 from app.ui.widgets.line_items_table import LineItemsTable
 from app.ui.widgets.money_spinbox import MoneySpinBox
 from app.ui.widgets.override_dialog import prompt_override_password
 from app.ui.widgets.payment_method_combo import PaymentMethodCombo
-
-
-def _labeled(label_text: str, widget: QWidget) -> QVBoxLayout:
-    """A field with its caption stacked above it - used to group several
-    fields onto one compact row instead of QFormLayout's one-field-per-row
-    (which made this form's info box far taller than it needed to be)."""
-    column = QVBoxLayout()
-    column.setSpacing(4)
-    label = QLabel(label_text)
-    label.setObjectName("sectionSubtitle")
-    column.addWidget(label)
-    column.addWidget(widget)
-    return column
 
 
 class InstallationInvoiceForm(QWidget):
@@ -90,34 +78,45 @@ class InstallationInvoiceForm(QWidget):
         self.address_input = QLineEdit()
         form.addLayout(_labeled("العنوان (اختياري)", self.address_input))
 
+        # Each of these rows pairs one compact field (fixed width, so it
+        # doesn't balloon to fill the whole row as the lone Expanding widget)
+        # with its related checkbox directly beside it, then a trailing
+        # stretch - field and checkbox sit snug together instead of the
+        # field spanning most of the row with the checkbox stranded far away.
         self.with_installation_checkbox = QCheckBox("مع التركيب (تُضاف رسوم التركيب)")
         self.with_installation_checkbox.stateChanged.connect(self._update_remaining_preview)
         self.deposit_input = MoneySpinBox()
+        self.deposit_input.setMaximumWidth(240)
         self.deposit_input.valueChanged.connect(self._update_remaining_preview)
         deposit_row = QHBoxLayout()
-        deposit_row.addWidget(self.with_installation_checkbox)
         deposit_row.addLayout(_labeled("المقدم (يُدفع عند الحجز)", self.deposit_input))
+        deposit_row.addWidget(self.with_installation_checkbox)
+        deposit_row.addStretch()
         form.addLayout(deposit_row)
 
         self.schedule_installation_checkbox = QCheckBox("تحديد تاريخ التركيب الآن")
         self.schedule_installation_checkbox.setChecked(True)
         self.installation_date_input = QDateEdit(QDate.currentDate())
+        self.installation_date_input.setMaximumWidth(240)
         self.installation_date_input.setCalendarPopup(True)
         self.installation_date_input.setDisplayFormat("yyyy-MM-dd")
         self.schedule_installation_checkbox.stateChanged.connect(
             lambda checked: self.installation_date_input.setEnabled(bool(checked) and self._browsed_id is None)
         )
         installation_date_row = QHBoxLayout()
-        installation_date_row.addWidget(self.schedule_installation_checkbox)
         installation_date_row.addLayout(_labeled("تاريخ التركيب", self.installation_date_input))
+        installation_date_row.addWidget(self.schedule_installation_checkbox)
+        installation_date_row.addStretch()
         form.addLayout(installation_date_row)
 
         self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
         self.tax_included_checkbox.stateChanged.connect(self._update_remaining_preview)
         self.payment_method_combo = PaymentMethodCombo()
+        self.payment_method_combo.setMaximumWidth(240)
         payment_row = QHBoxLayout()
-        payment_row.addWidget(self.tax_included_checkbox)
         payment_row.addLayout(_labeled("طريقة دفع المقدم *", self.payment_method_combo))
+        payment_row.addWidget(self.tax_included_checkbox)
+        payment_row.addStretch()
         form.addLayout(payment_row)
 
         layout.addLayout(form)

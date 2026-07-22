@@ -39,7 +39,22 @@ def create_cash_invoice(
     payment_method: str,
     override_password_prompt: OverridePrompt,
     customer_name: str | None = None,
+    with_delivery: bool = False,
+    area_region: str | None = None,
+    address: str | None = None,
+    deposit_fils: int = 0,
+    delivery_date: str | None = None,
 ) -> int:
+    """A plain cash invoice is paid in full immediately (no deposit concept).
+    with_delivery=True adds a delivery leg on top: it goes through the exact
+    same installation-schedule/outcome workflow as an installation invoice
+    (see invoices_repo.list_installations_for_date), can carry a deposit
+    (with the remainder due on delivery, mirroring
+    create_installation_invoice's booked/completed split), and needs a
+    region. The delivery fee itself isn't handled here - the caller (the
+    invoice form) adds it as a normal, user-editable line item before
+    calling this, exactly like any other item.
+    """
     require_permission(
         conn, user, Permission.CREATE_INVOICE, "إنشاء فاتورة قطع جاهزة", override_password_prompt
     )
@@ -48,11 +63,20 @@ def create_cash_invoice(
     if not items:
         raise ValueError("يجب إضافة صنف واحد على الأقل")
     _validate_payment_method(payment_method)
+    if with_delivery and not area_region:
+        raise ValueError("المنطقة مطلوبة للتوصيل")
 
     settings = settings_repo.get_settings(conn)
     subtotal_fils = sum_line_items_fils(items)
     tax = compute_tax(subtotal_fils, settings["tax_rate_percent"], tax_included)
     invoice_no = settings_repo.reserve_next_number(conn, "invoice", "cash")
+
+    deposit_fils = deposit_fils if with_delivery else 0
+    if with_delivery:
+        remaining_balance_fils(tax.grand_total_fils, deposit_fils)  # raises if deposit invalid
+        status = "completed" if deposit_fils >= tax.grand_total_fils else "booked"
+    else:
+        status = "completed"
 
     try:
         invoice_id = invoices_repo.insert_invoice(
@@ -61,17 +85,20 @@ def create_cash_invoice(
             invoice_no=invoice_no,
             customer_name=customer_name or CASH_PLACEHOLDER_NAME,
             phone=phone,
-            address=None,
-            area_region=None,
-            status="completed",
+            address=address if with_delivery else None,
+            area_region=area_region if with_delivery else None,
+            status=status,
             with_installation=None,
+            with_delivery=int(with_delivery),
             subtotal_fils=tax.subtotal_fils,
             tax_included=int(tax_included),
             tax_rate_percent=tax.tax_rate_percent,
             tax_amount_fils=tax.tax_amount_fils,
             grand_total_fils=tax.grand_total_fils,
-            deposit_fils=0,
+            deposit_fils=deposit_fils,
             payment_method=payment_method,
+            installation_date=delivery_date if with_delivery else None,
+            installation_status="pending" if with_delivery else None,
             created_by_user_id=user["id"],
         )
         for item in items:
@@ -84,9 +111,14 @@ def create_cash_invoice(
                 unit_price_fils=item["unit_price_fils"],
                 line_total_fils=line_total_fils(item["quantity"], item["unit_price_fils"]),
             )
-        invoices_repo.insert_invoice_payment(
-            conn, invoice_id, "full", tax.grand_total_fils, user["id"]
-        )
+        if with_delivery:
+            if deposit_fils > 0:
+                payment_type = "full" if status == "completed" else "deposit"
+                invoices_repo.insert_invoice_payment(conn, invoice_id, payment_type, deposit_fils, user["id"])
+        else:
+            invoices_repo.insert_invoice_payment(
+                conn, invoice_id, "full", tax.grand_total_fils, user["id"]
+            )
         inventory_service.decrement_stock_for_sale(
             conn, user, invoice_id, date.today().isoformat(), items
         )

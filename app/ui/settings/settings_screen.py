@@ -154,6 +154,10 @@ class SettingsScreen(QWidget):
         self.installation_fee_input.set_fils_value(settings["default_installation_fee_fils"])
         form.addRow("رسوم التركيب الافتراضية", self.installation_fee_input)
 
+        self.delivery_fee_input = MoneySpinBox()
+        self.delivery_fee_input.set_fils_value(settings["default_delivery_fee_fils"])
+        form.addRow("رسوم التوصيل الافتراضية", self.delivery_fee_input)
+
         self.late_fine_input = MoneySpinBox()
         self.late_fine_input.set_fils_value(settings["late_fine_amount_fils"])
         form.addRow("غرامة التأخير لكل مرة", self.late_fine_input)
@@ -177,6 +181,7 @@ class SettingsScreen(QWidget):
             self._user,
             tax_rate_percent=self.tax_rate_input.value(),
             default_installation_fee_fils=self.installation_fee_input.fils_value(),
+            default_delivery_fee_fils=self.delivery_fee_input.fils_value(),
             late_fine_amount_fils=self.late_fine_input.fils_value(),
             working_days_per_month=self.working_days_input.value(),
         )

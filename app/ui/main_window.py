@@ -3,8 +3,8 @@ content area with a page header."""
 
 import sqlite3
 
-from PySide6.QtCore import QDate, QEasingCurve, QPropertyAnimation, Qt, QTimer, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import QDate, QEasingCurve, QPropertyAnimation, Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
@@ -66,22 +66,6 @@ class MainWindow(QMainWindow):
         content_layout.setSpacing(14)
         root_layout.addWidget(content_container, 1)
 
-        # Large faint logo watermark behind the content area (created first
-        # so it stays behind everything added afterward), same technique as
-        # the login screen's watermark.
-        self._content_watermark = QLabel(content_container)
-        logo_path = _ICONS_DIR / "logo.png"
-        if logo_path.exists():
-            watermark_pixmap = QPixmap(str(logo_path)).scaledToHeight(
-                420, Qt.TransformationMode.SmoothTransformation
-            )
-            self._content_watermark.setPixmap(watermark_pixmap)
-            self._content_watermark.setFixedSize(watermark_pixmap.size())
-            watermark_effect = QGraphicsOpacityEffect(self._content_watermark)
-            watermark_effect.setOpacity(0.05)
-            self._content_watermark.setGraphicsEffect(watermark_effect)
-        self._content_watermark.lower()
-
         title_row = QHBoxLayout()
         self.home_button = QPushButton()
         home_icon_path = _ICONS_DIR / "navy" / "home.svg"
@@ -130,31 +114,6 @@ class MainWindow(QMainWindow):
 
         self.sidebar.current_row_changed.connect(self._switch_page)
         self.sidebar.set_current_row(0)
-        self._reposition_watermark()
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._reposition_watermark()
-
-    def _reposition_watermark(self) -> None:
-        pixmap = self._content_watermark.pixmap()
-        if pixmap is None or pixmap.isNull():
-            return
-
-        # Pages that expose a watermark_anchor() (currently just the
-        # dashboard) get the logo centered on that specific gap instead of
-        # the whole content area, so it never lands partially hidden behind
-        # a row of cards - see DashboardScreen.watermark_anchor().
-        current = self.stack.currentWidget()
-        anchor = current.watermark_anchor() if hasattr(current, "watermark_anchor") else None
-        if anchor is not None:
-            anchor_center = anchor.mapTo(self._content_container, anchor.rect().center())
-            x = anchor_center.x() - self._content_watermark.width() // 2
-            y = anchor_center.y() - self._content_watermark.height() // 2
-        else:
-            x = (self._content_container.width() - self._content_watermark.width()) // 2
-            y = (self._content_container.height() - self._content_watermark.height()) // 2
-        self._content_watermark.move(max(0, x), max(0, y))
 
     def _add_page(self, title: str, widget: QWidget, icon_file: str) -> None:
         self._page_titles.append(title)
@@ -172,10 +131,6 @@ class MainWindow(QMainWindow):
         # sidebar steps aside to give it the full width; every other page
         # keeps the sidebar for normal navigation.
         self.sidebar.setVisible(index != 0)
-        # Deferred to let the just-switched page's layout settle first, since
-        # the new page's watermark_anchor() (if any) has no valid geometry
-        # until after this event loop turn.
-        QTimer.singleShot(0, self._reposition_watermark)
 
         overlay = self._transition_overlay
         overlay.setGeometry(self.stack.rect())

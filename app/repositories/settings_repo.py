@@ -44,6 +44,7 @@ def update_settings(conn: sqlite3.Connection, **fields) -> None:
         "shop_address",
         "tax_rate_percent",
         "default_installation_fee_fils",
+        "default_delivery_fee_fils",
         "late_fine_amount_fils",
         "working_days_per_month",
     }

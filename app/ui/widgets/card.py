@@ -24,9 +24,16 @@ class Card(QFrame):
     def set_watermark_enabled(self, enabled: bool) -> None:
         """Opts this specific card out of the shared background watermark
         (e.g. small header cards where the logo has no room to read as
-        anything but clutter) via a dynamic property + QSS attribute
-        selector - see `QFrame#card[watermark="off"]` in app_rtl.qss."""
-        self.setProperty("watermark", "on" if enabled else "off")
+        anything but clutter). Switches to a dedicated objectName
+        ("cardNoWatermark") with its own exclusive QSS rule, rather than a
+        dynamic property + attribute selector on top of the base `#card`
+        rule - Qt's stylesheet cascade did not actually let the attribute
+        selector override the base rule's background-image (confirmed by
+        rendering a card in isolation: the watermark stayed visible even
+        with the property set and unpolish()/polish() called), so a
+        completely separate selector sidesteps that specificity ambiguity
+        entirely. See `QFrame#cardNoWatermark` in app_rtl.qss."""
+        self.setObjectName("card" if enabled else "cardNoWatermark")
         self.style().unpolish(self)
         self.style().polish(self)
 

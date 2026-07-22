@@ -48,10 +48,12 @@ QFrame#card {
 /* Cards with the watermark explicitly disabled (currently just the small
    dashboard date/greeting header - too little room for the logo to read as
    anything but clutter) are solid white instead of transparent, since they
-   don't need to reveal anything behind them. */
-QFrame#card[watermark="off"] {
+   don't need to reveal anything behind them. A dedicated objectName instead
+   of an attribute selector on #card - see Card.set_watermark_enabled(). */
+QFrame#cardNoWatermark {
     background-color: #ffffff;
-    background-image: none;
+    border: 2px solid #b6c0dd;
+    border-radius: 12px;
 }
 
 /* Lets the page scroll instead of squeezing content into a fixed height -

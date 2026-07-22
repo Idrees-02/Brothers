@@ -2,15 +2,26 @@
 existing invoices (previous/next, or jump to an invoice number - driven by
 the shared InvoicesScreen navigator, which also handles switching to this
 tab when browsing lands on a cash-type invoice), editing a previously saved
-one inline, and an unsaved-changes guard before navigating away."""
+one inline, and an unsaved-changes guard before navigating away.
+
+Also supports an optional delivery leg ("مع التوصيل"): when checked, the
+invoice goes through the exact same installation-schedule/outcome workflow
+as an installation invoice (see invoices_repo.list_installations_for_date),
+and a "رسوم التوصيل" line item is added to the table automatically (at the
+default fee from Settings, freely editable/removable). Editing an existing
+invoice only supports the same fields invoice_service.update_invoice
+supports (customer info, tax, payment method, line items) - delivery
+region/address/deposit/date are managed through dedicated flows elsewhere
+(the installation schedule screen), so those fields are shown for context
+but disabled while browsing, matching InstallationInvoiceForm."""
 
 import sqlite3
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QDate, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDateEdit,
     QFileDialog,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,10 +35,14 @@ from app.repositories import invoices_repo, settings_repo
 from app.services import invoice_service
 from app.ui.invoices.invoice_print import export_invoice_pdf
 from app.ui.widgets.card import Card, scrollable
+from app.ui.widgets.compact_form import labeled_field as _labeled
 from app.ui.widgets.dirty_tracker import DirtyTracker
 from app.ui.widgets.line_items_table import LineItemsTable
+from app.ui.widgets.money_spinbox import MoneySpinBox
 from app.ui.widgets.override_dialog import prompt_override_password
 from app.ui.widgets.payment_method_combo import PaymentMethodCombo
+
+_DELIVERY_FEE_DESCRIPTION = "رسوم التوصيل"
 
 
 class CashInvoiceForm(QWidget):
@@ -46,23 +61,58 @@ class CashInvoiceForm(QWidget):
         outer_layout.addWidget(scrollable(card))
         layout = card.body_layout
 
-        subtitle = QLabel("المبلغ يُدفع بالكامل عند الاستلام")
+        subtitle = QLabel("المبلغ يُدفع بالكامل عند الاستلام - أو عند التوصيل إن وُجد")
         subtitle.setObjectName("sectionSubtitle")
         layout.addWidget(subtitle)
 
-        form = QFormLayout()
+        form = QVBoxLayout()
+        form.setSpacing(12)
+
         self.customer_name_input = QLineEdit()
         self.customer_name_input.setPlaceholderText("اختياري - يُملأ تلقائياً بـ \"نقدي\"")
-        form.addRow("اسم الزبون", self.customer_name_input)
-
         self.phone_input = QLineEdit()
-        form.addRow("رقم الهاتف *", self.phone_input)
+        self.area_region_input = QLineEdit()
+        identity_row = QHBoxLayout()
+        identity_row.addLayout(_labeled("اسم الزبون", self.customer_name_input))
+        identity_row.addLayout(_labeled("رقم الهاتف *", self.phone_input))
+        identity_row.addLayout(_labeled("المنطقة (للتوصيل)", self.area_region_input))
+        form.addLayout(identity_row)
+
+        self.address_input = QLineEdit()
+        form.addLayout(_labeled("العنوان (للتوصيل)", self.address_input))
+
+        # Same "field on the right, its checkbox directly beside it" layout
+        # as InstallationInvoiceForm - see the comment there.
+        self.with_delivery_checkbox = QCheckBox("مع التوصيل")
+        self.with_delivery_checkbox.toggled.connect(self._on_delivery_toggled)
+        self.deposit_input = MoneySpinBox()
+        self.deposit_input.setMaximumWidth(240)
+        self.deposit_input.setEnabled(False)
+        deposit_row = QHBoxLayout()
+        deposit_row.addLayout(_labeled("المقدم (يُدفع عند الحجز)", self.deposit_input))
+        deposit_row.addWidget(self.with_delivery_checkbox)
+        deposit_row.addStretch()
+        form.addLayout(deposit_row)
+
+        self.delivery_date_input = QDateEdit(QDate.currentDate())
+        self.delivery_date_input.setMaximumWidth(240)
+        self.delivery_date_input.setCalendarPopup(True)
+        self.delivery_date_input.setDisplayFormat("yyyy-MM-dd")
+        self.delivery_date_input.setEnabled(False)
+        delivery_date_row = QHBoxLayout()
+        delivery_date_row.addLayout(_labeled("تاريخ التوصيل", self.delivery_date_input))
+        delivery_date_row.addStretch()
+        form.addLayout(delivery_date_row)
 
         self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
-        form.addRow(self.tax_included_checkbox)
-
         self.payment_method_combo = PaymentMethodCombo()
-        form.addRow("طريقة الدفع *", self.payment_method_combo)
+        self.payment_method_combo.setMaximumWidth(240)
+        payment_row = QHBoxLayout()
+        payment_row.addLayout(_labeled("طريقة الدفع *", self.payment_method_combo))
+        payment_row.addWidget(self.tax_included_checkbox)
+        payment_row.addStretch()
+        form.addLayout(payment_row)
+
         layout.addLayout(form)
 
         self.items_table = LineItemsTable(quantity_label="الكمية", conn=conn)
@@ -72,6 +122,11 @@ class CashInvoiceForm(QWidget):
         self._dirty_tracker.watch(
             self.customer_name_input,
             self.phone_input,
+            self.area_region_input,
+            self.address_input,
+            self.with_delivery_checkbox,
+            self.deposit_input,
+            self.delivery_date_input,
             self.tax_included_checkbox,
             self.payment_method_combo,
             self.items_table,
@@ -114,6 +169,14 @@ class CashInvoiceForm(QWidget):
         def apply():
             self.customer_name_input.setText(header["customer_name"] or "")
             self.phone_input.setText(header["phone"])
+            self.area_region_input.setText(header["area_region"] or "")
+            self.address_input.setText(header["address"] or "")
+            self.with_delivery_checkbox.setChecked(bool(header["with_delivery"]))
+            self.deposit_input.set_fils_value(header["deposit_fils"])
+            if header["installation_date"]:
+                self.delivery_date_input.setDate(
+                    QDate.fromString(header["installation_date"], "yyyy-MM-dd")
+                )
             self.tax_included_checkbox.setChecked(bool(header["tax_included"]))
             self.payment_method_combo.set_method(header["payment_method"])
             self.items_table.clear_rows()
@@ -123,6 +186,14 @@ class CashInvoiceForm(QWidget):
                 )
 
         self._dirty_tracker.set_fields_silently(apply)
+        # Delivery fields aren't editable through this path (see module
+        # docstring) - shown for context, not blank.
+        self.area_region_input.setEnabled(False)
+        self.address_input.setEnabled(False)
+        self.with_delivery_checkbox.setEnabled(False)
+        self.deposit_input.setEnabled(False)
+        self.delivery_date_input.setEnabled(False)
+
         self.save_button.setText("حفظ التعديلات")
         self.new_invoice_button.setEnabled(True)
         self.export_button.setEnabled(True)
@@ -131,15 +202,33 @@ class CashInvoiceForm(QWidget):
         if not self._dirty_tracker.confirm_discard():
             return
         self._browsed_id = None
+        self.area_region_input.setEnabled(True)
+        self.address_input.setEnabled(True)
+        self.with_delivery_checkbox.setEnabled(True)
         self.save_button.setText("حفظ الفاتورة")
         self.new_invoice_button.setEnabled(False)
         self.export_button.setEnabled(self._last_invoice_id is not None)
         self._reset_form()
         self._dirty_tracker.mark_clean()
 
+    # ---------------------------------------------------------- delivery
+    def _on_delivery_toggled(self, checked: bool) -> None:
+        self.deposit_input.setEnabled(checked)
+        self.delivery_date_input.setEnabled(checked)
+        if checked:
+            if not self.items_table.has_row_with_description(_DELIVERY_FEE_DESCRIPTION):
+                fee_bhd = settings_repo.get_settings(self._conn)["default_delivery_fee_fils"] / 1000
+                self.items_table.add_row(_DELIVERY_FEE_DESCRIPTION, 1, fee_bhd)
+        else:
+            self.items_table.remove_row_by_description(_DELIVERY_FEE_DESCRIPTION)
+
     # ------------------------------------------------------------ saving
     def _save(self) -> None:
         items = self.items_table.items()
+        with_delivery = self.with_delivery_checkbox.isChecked()
+        if with_delivery and not self.area_region_input.text().strip():
+            QMessageBox.warning(self, "تعذر حفظ الفاتورة", "المنطقة مطلوبة للتوصيل")
+            return
         try:
             if self._browsed_id is None:
                 invoice_id = invoice_service.create_cash_invoice(
@@ -153,6 +242,15 @@ class CashInvoiceForm(QWidget):
                         "إنشاء فاتورة قطع جاهزة", self
                     ),
                     customer_name=self.customer_name_input.text().strip() or None,
+                    with_delivery=with_delivery,
+                    area_region=self.area_region_input.text().strip() or None,
+                    address=self.address_input.text().strip() or None,
+                    deposit_fils=self.deposit_input.fils_value(),
+                    delivery_date=(
+                        self.delivery_date_input.date().toString("yyyy-MM-dd")
+                        if with_delivery
+                        else None
+                    ),
                 )
             else:
                 invoice_service.update_invoice(
@@ -186,6 +284,11 @@ class CashInvoiceForm(QWidget):
     def _reset_form(self) -> None:
         self.customer_name_input.clear()
         self.phone_input.clear()
+        self.area_region_input.clear()
+        self.address_input.clear()
+        self.with_delivery_checkbox.setChecked(False)
+        self.deposit_input.setValue(0)
+        self.delivery_date_input.setDate(QDate.currentDate())
         self.tax_included_checkbox.setChecked(False)
         self.payment_method_combo.setCurrentIndex(0)
         self.items_table.clear_rows()

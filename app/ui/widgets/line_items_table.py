@@ -8,6 +8,7 @@ import sqlite3
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QTableWidget,
@@ -43,6 +44,7 @@ class LineItemsTable(QWidget):
             ["الوصف", quantity_label, "سعر الوحدة (د.ب)", "الإجمالي (د.ب)"]
         )
         self.table.itemChanged.connect(self._recompute_row_on_change)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         # This table sizes itself to fit exactly its rows (see
         # _update_table_height) and never scrolls internally - the *page*
         # containing it is what scrolls when there are many items, instead
@@ -125,6 +127,26 @@ class LineItemsTable(QWidget):
             self.table.removeRow(row)
             self._update_table_height()
             self.items_changed.emit()
+
+    def has_row_with_description(self, description: str) -> bool:
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, _COL_DESCRIPTION)
+            if item is not None and item.text() == description:
+                return True
+        return False
+
+    def remove_row_by_description(self, description: str) -> bool:
+        """Removes the first row whose description matches exactly - returns
+        True if a row was removed. Used by toggles that auto-add a named row
+        (e.g. a delivery fee line item) and need to auto-remove it again."""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, _COL_DESCRIPTION)
+            if item is not None and item.text() == description:
+                self.table.removeRow(row)
+                self._update_table_height()
+                self.items_changed.emit()
+                return True
+        return False
 
     def _recompute_row_on_change(self, item: QTableWidgetItem) -> None:
         if item.column() in (_COL_QUANTITY, _COL_UNIT_PRICE):

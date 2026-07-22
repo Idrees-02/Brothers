@@ -385,6 +385,21 @@ SCHEMA_V8_SQL = """
 ALTER TABLE settings ADD COLUMN next_invoice_no INTEGER NOT NULL DEFAULT 1;
 """
 
+# v9: delivery option on cash invoices (فواتير القطع جاهزة مع التوصيل) -
+# reuses the existing installation_date/installation_status/
+# assigned_employee_id/area_region/address/deposit_fils columns (already
+# generic on the invoices table, previously only populated for
+# invoice_type='installation') for the delivery leg's scheduling, so a cash
+# invoice with with_delivery=1 can go through the exact same installation
+# schedule/outcome workflow without a wider migration. with_delivery is a
+# separate flag (not reusing with_installation) so a cash invoice's own
+# type/quantity-label semantics ("قطع جاهزة", quantity-priced) stay intact -
+# it's still fundamentally a cash invoice, just with a delivery leg.
+SCHEMA_V9_SQL = """
+ALTER TABLE invoices ADD COLUMN with_delivery INTEGER NOT NULL DEFAULT 0 CHECK (with_delivery IN (0,1));
+ALTER TABLE settings ADD COLUMN default_delivery_fee_fils INTEGER NOT NULL DEFAULT 5000;
+"""
+
 # Ordered list of (version, sql) pairs applied in sequence by migrations.py.
 # Add new (version, sql) tuples here for future schema changes - never edit
 # a SCHEMA_VN_SQL string after it has shipped, since existing databases at
@@ -398,4 +413,5 @@ MIGRATIONS: list[tuple[int, str]] = [
     (6, SCHEMA_V6_SQL),
     (7, SCHEMA_V7_SQL),
     (8, SCHEMA_V8_SQL),
+    (9, SCHEMA_V9_SQL),
 ]

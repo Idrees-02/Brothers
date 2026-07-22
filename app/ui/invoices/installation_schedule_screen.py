@@ -39,6 +39,13 @@ _STATUS_LABEL = {
 _UNASSIGNED = "-- غير معين --"
 
 
+def _kind_label(row) -> str:
+    """This screen now lists both installation invoices and delivery-flagged
+    cash invoices (see invoices_repo.list_installations_for_date) - they go
+    through the exact same workflow, just labeled differently."""
+    return "تركيب" if row["invoice_type"] == "installation" else "توصيل"
+
+
 class InstallationOutcomeDialog(QDialog):
     def __init__(self, conn: sqlite3.Connection, invoice_id: int, parent=None):
         super().__init__(parent)
@@ -128,7 +135,7 @@ class InstallationScheduleScreen(QWidget):
         outer_layout.addWidget(card)
         layout = card.body_layout
 
-        subtitle = QLabel("اختر يوماً لعرض كل فواتير التركيب المستحقة فيه")
+        subtitle = QLabel("اختر يوماً لعرض كل فواتير التركيب والتوصيل المستحقة فيه")
         subtitle.setObjectName("sectionSubtitle")
         layout.addWidget(subtitle)
 
@@ -142,9 +149,9 @@ class InstallationScheduleScreen(QWidget):
         date_row.addStretch()
         layout.addLayout(date_row)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["رقم الفاتورة", "الزبون", "الهاتف", "المنطقة", "الفني المسؤول", "الحالة"]
+            ["رقم الفاتورة", "النوع", "الزبون", "الهاتف", "المنطقة", "الفني المسؤول", "الحالة"]
         )
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -176,9 +183,10 @@ class InstallationScheduleScreen(QWidget):
         self.table.setRowCount(len(rows))
         for i, row in enumerate(rows):
             self.table.setItem(i, 0, QTableWidgetItem(row["invoice_no"]))
-            self.table.setItem(i, 1, QTableWidgetItem(row["customer_name"] or ""))
-            self.table.setItem(i, 2, QTableWidgetItem(row["phone"]))
-            self.table.setItem(i, 3, QTableWidgetItem(row["area_region"] or ""))
+            self.table.setItem(i, 1, QTableWidgetItem(_kind_label(row)))
+            self.table.setItem(i, 2, QTableWidgetItem(row["customer_name"] or ""))
+            self.table.setItem(i, 3, QTableWidgetItem(row["phone"]))
+            self.table.setItem(i, 4, QTableWidgetItem(row["area_region"] or ""))
 
             combo = QComboBox()
             combo.addItem(_UNASSIGNED)
@@ -188,7 +196,7 @@ class InstallationScheduleScreen(QWidget):
             combo.currentIndexChanged.connect(
                 lambda _index, invoice_id=row["id"], combo=combo: self._assign(invoice_id, combo)
             )
-            self.table.setCellWidget(i, 4, combo)
+            self.table.setCellWidget(i, 5, combo)
 
             status_button = QPushButton(_STATUS_LABEL.get(row["installation_status"], ""))
             status_button.setObjectName("secondaryButton")
@@ -196,10 +204,10 @@ class InstallationScheduleScreen(QWidget):
             status_button.clicked.connect(
                 lambda _checked=False, invoice_id=row["id"]: self._mark_outcome_for_invoice(invoice_id)
             )
-            self.table.setCellWidget(i, 5, status_button)
+            self.table.setCellWidget(i, 6, status_button)
 
         # Rows sized purely from the plain-text columns above are too short
-        # for the padded QComboBox in column 4 (its current selection - the
+        # for the padded QComboBox in column 5 (its current selection - the
         # assigned technician's name - gets vertically clipped). Size rows
         # from actual cell-widget content instead.
         self.table.resizeRowsToContents()

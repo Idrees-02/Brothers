@@ -155,13 +155,14 @@ def count_invoices_created_on(conn: sqlite3.Connection, work_date: str) -> int:
 
 
 def list_installations_for_date(conn: sqlite3.Connection, work_date: str) -> list[sqlite3.Row]:
-    """Installation-type invoices scheduled for work_date, joined with the
-    assigned employee's name for display in the scheduling screen."""
+    """Installation-type invoices AND delivery-flagged cash invoices
+    scheduled for work_date, joined with the assigned employee's name - both
+    go through the exact same scheduling screen/outcome workflow."""
     return conn.execute(
         """SELECT invoices.*, employees.full_name AS assigned_employee_name
            FROM invoices
            LEFT JOIN employees ON employees.id = invoices.assigned_employee_id
-           WHERE invoices.invoice_type = 'installation'
+           WHERE (invoices.invoice_type = 'installation' OR invoices.with_delivery = 1)
              AND invoices.installation_date = date(?)
              AND invoices.status != 'voided'
            ORDER BY invoices.created_at""",
@@ -172,7 +173,7 @@ def list_installations_for_date(conn: sqlite3.Connection, work_date: str) -> lis
 def count_installations_for_date(conn: sqlite3.Connection, work_date: str) -> int:
     row = conn.execute(
         """SELECT COUNT(*) AS cnt FROM invoices
-           WHERE invoice_type = 'installation' AND installation_date = date(?)
+           WHERE (invoice_type = 'installation' OR with_delivery = 1) AND installation_date = date(?)
              AND status != 'voided'""",
         (work_date,),
     ).fetchone()

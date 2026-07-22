@@ -124,14 +124,21 @@ class DashboardScreen(QWidget):
         self._layout.addLayout(cards_row)
         self._layout.addStretch(1)
 
-        # Zero-height marker sitting exactly between the stat-card row and the
-        # quick-access row - MainWindow centers the big background watermark
-        # on this widget's geometry (instead of the whole content area) so the
-        # logo always lands fully visible in this gap instead of being
-        # partially hidden behind whichever row happens to be taller.
-        self._watermark_anchor = QWidget()
-        self._watermark_anchor.setFixedHeight(0)
-        self._layout.addWidget(self._watermark_anchor)
+        # A real child widget in the gap between the stat-card row and the
+        # quick-access row - laid out by Qt itself (centered, with stretch on
+        # both sides), not manually positioned by computing another widget's
+        # geometry. The previous approach (a floating QLabel owned by
+        # MainWindow, repositioned via anchor.mapTo() math) raced the
+        # dashboard's own layout on first show - before any resize event ran,
+        # the anchor's geometry was still stale, so the watermark could land
+        # on top of the header card instead of in this gap. A plain in-layout
+        # widget can't drift like that; Qt places it correctly on first paint.
+        watermark_path = resources_dir() / "icons" / "logo_watermark.png"
+        self._watermark_label = QLabel()
+        self._watermark_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if watermark_path.exists():
+            self._watermark_label.setPixmap(QPixmap(str(watermark_path)))
+        self._layout.addWidget(self._watermark_label)
         self._layout.addStretch(1)
 
         self._quick_access_label = QLabel("الوصول السريع")
@@ -144,11 +151,6 @@ class DashboardScreen(QWidget):
         self._layout.addStretch(1)
 
         self.refresh()
-
-    def watermark_anchor(self) -> QWidget:
-        """Widget MainWindow centers the shared background watermark on when
-        this page is active - see the comment above `_watermark_anchor`."""
-        return self._watermark_anchor
 
     def _confirm_logout(self) -> None:
         answer = QMessageBox.question(

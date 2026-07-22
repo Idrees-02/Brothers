@@ -41,6 +41,75 @@ def test_create_cash_invoice_requires_phone(conn):
         )
 
 
+def test_create_cash_invoice_with_delivery_requires_region(conn):
+    admin = get_admin(conn)
+    with pytest.raises(ValueError):
+        invoice_service.create_cash_invoice(
+            conn,
+            admin,
+            phone="33330000",
+            items=[{"description": "سجادة", "quantity": 1, "unit_price_fils": 10_000}],
+            tax_included=False,
+            payment_method="cash",
+            override_password_prompt=lambda: None,
+            with_delivery=True,
+        )
+
+
+def test_create_cash_invoice_with_delivery(conn):
+    admin = get_admin(conn)
+    invoice_id = invoice_service.create_cash_invoice(
+        conn,
+        admin,
+        phone="33330000",
+        items=[
+            {"description": "سجادة", "quantity": 1, "unit_price_fils": 50_000},
+            {"description": "رسوم التوصيل", "quantity": 1, "unit_price_fils": 5_000},
+        ],
+        tax_included=False,
+        payment_method="cash",
+        override_password_prompt=lambda: None,
+        with_delivery=True,
+        area_region="المنامة",
+        address="شارع 10",
+        deposit_fils=10_000,
+        delivery_date="2026-08-01",
+    )
+    header = invoices_repo.get_invoice(conn, invoice_id)["header"]
+    assert header["with_delivery"] == 1
+    assert header["area_region"] == "المنامة"
+    assert header["address"] == "شارع 10"
+    assert header["installation_date"] == "2026-08-01"
+    assert header["installation_status"] == "pending"
+    assert header["deposit_fils"] == 10_000
+    assert header["status"] == "booked"  # deposit < grand total
+
+    # It must appear in the shared installation-schedule query for that date.
+    scheduled = invoice_service.list_installations_for_date(conn, "2026-08-01")
+    assert len(scheduled) == 1
+    assert scheduled[0]["id"] == invoice_id
+
+
+def test_create_cash_invoice_without_delivery_ignores_delivery_fields(conn):
+    admin = get_admin(conn)
+    invoice_id = invoice_service.create_cash_invoice(
+        conn,
+        admin,
+        phone="33330000",
+        items=[{"description": "سجادة", "quantity": 1, "unit_price_fils": 10_000}],
+        tax_included=False,
+        payment_method="cash",
+        override_password_prompt=lambda: None,
+        area_region="يجب أن يُتجاهل",  # with_delivery=False - these must not persist
+        deposit_fils=5_000,
+    )
+    header = invoices_repo.get_invoice(conn, invoice_id)["header"]
+    assert header["with_delivery"] == 0
+    assert header["area_region"] is None
+    assert header["deposit_fils"] == 0
+    assert header["status"] == "completed"
+
+
 def test_create_installation_invoice_with_deposit_stays_booked(conn):
     admin = get_admin(conn)
     invoice_id = invoice_service.create_installation_invoice(
