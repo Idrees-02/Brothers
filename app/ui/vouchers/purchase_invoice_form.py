@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.domain.money import fils_to_bhd_str
-from app.repositories import vouchers_repo
+from app.repositories import settings_repo, vouchers_repo
 from app.services import voucher_service
 from app.ui.widgets.card import Card, scrollable
 from app.ui.widgets.line_items_table import LineItemsTable
@@ -57,10 +57,14 @@ class PurchaseInvoiceFormScreen(QWidget):
         form.addRow("ملاحظات", self.note_input)
 
         self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
+        self.tax_included_checkbox.stateChanged.connect(
+            lambda: self.items_table.set_tax_included(self.tax_included_checkbox.isChecked())
+        )
         form.addRow(self.tax_included_checkbox)
         layout.addLayout(form)
 
         self.items_table = LineItemsTable(quantity_label="الكمية", conn=conn)
+        self.items_table.set_tax_rate(settings_repo.get_settings(conn)["tax_rate_percent"])
         layout.addWidget(self.items_table)
 
         buttons_row = QHBoxLayout()
@@ -93,7 +97,9 @@ class PurchaseInvoiceFormScreen(QWidget):
                 override_password_prompt=lambda: prompt_override_password(
                     "إنشاء فاتورة شراء", self
                 ),
-                tax_included=self.tax_included_checkbox.isChecked(),
+                # The table always yields ex-tax unit prices regardless of
+                # the entry-mode checkbox, so tax must be added on top.
+                tax_included=False,
                 note=self.note_input.text().strip() or None,
             )
         except Exception as exc:  # noqa: BLE001

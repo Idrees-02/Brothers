@@ -265,7 +265,7 @@ QLabel#brandSubLabel {
 
 QListWidget#navList {
     background-color: transparent;
-    color: #c7cfe8;
+    color: #101e45;
     border: none;
     padding: 4px 10px;
     outline: none;

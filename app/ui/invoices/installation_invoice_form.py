@@ -103,25 +103,22 @@ class InstallationInvoiceForm(QWidget):
         self.schedule_installation_checkbox.stateChanged.connect(
             lambda checked: self.installation_date_input.setEnabled(bool(checked) and self._browsed_id is None)
         )
-        installation_date_row = QHBoxLayout()
-        installation_date_row.addLayout(_labeled("تاريخ التركيب", self.installation_date_input))
-        installation_date_row.addWidget(self.schedule_installation_checkbox)
-        installation_date_row.addStretch()
-        form.addLayout(installation_date_row)
-
         self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
-        self.tax_included_checkbox.stateChanged.connect(self._update_remaining_preview)
+        self.tax_included_checkbox.stateChanged.connect(self._on_tax_included_changed)
         self.payment_method_combo = PaymentMethodCombo()
         self.payment_method_combo.setMaximumWidth(240)
-        payment_row = QHBoxLayout()
-        payment_row.addLayout(_labeled("طريقة دفع المقدم *", self.payment_method_combo))
-        payment_row.addWidget(self.tax_included_checkbox)
-        payment_row.addStretch()
-        form.addLayout(payment_row)
+        details_row = QHBoxLayout()
+        details_row.addLayout(_labeled("تاريخ التركيب", self.installation_date_input))
+        details_row.addWidget(self.schedule_installation_checkbox)
+        details_row.addLayout(_labeled("طريقة دفع المقدم *", self.payment_method_combo))
+        details_row.addWidget(self.tax_included_checkbox)
+        details_row.addStretch()
+        form.addLayout(details_row)
 
         layout.addLayout(form)
 
         self.items_table = LineItemsTable(quantity_label="المتر المربع", conn=conn)
+        self.items_table.set_tax_rate(settings_repo.get_settings(conn)["tax_rate_percent"])
         self.items_table.items_changed.connect(self._update_remaining_preview)
         layout.addWidget(self.items_table)
 
@@ -239,7 +236,9 @@ class InstallationInvoiceForm(QWidget):
                     items=items,
                     with_installation=self.with_installation_checkbox.isChecked(),
                     deposit_fils=self.deposit_input.fils_value(),
-                    tax_included=self.tax_included_checkbox.isChecked(),
+                    # The table always yields ex-tax unit prices regardless
+                    # of the entry-mode checkbox, so tax must be added on top.
+                    tax_included=False,
                     payment_method=self.payment_method_combo.selected_method(),
                     override_password_prompt=lambda: prompt_override_password(
                         "إنشاء فاتورة تركيب وتفصيل", self
@@ -258,7 +257,7 @@ class InstallationInvoiceForm(QWidget):
                     self._browsed_id,
                     phone=self.phone_input.text().strip(),
                     items=items,
-                    tax_included=self.tax_included_checkbox.isChecked(),
+                    tax_included=False,
                     override_password_prompt=lambda: prompt_override_password("تعديل فاتورة", self),
                     customer_name=self.customer_name_input.text().strip() or None,
                     address=self.address_input.text().strip() or None,
@@ -299,13 +298,20 @@ class InstallationInvoiceForm(QWidget):
         self.items_table.clear_rows()
         self._update_remaining_preview()
 
+    def _on_tax_included_changed(self, *_args) -> None:
+        self.items_table.set_tax_included(self.tax_included_checkbox.isChecked())
+        self._update_remaining_preview()
+
     def _update_remaining_preview(self, *_args) -> None:
         settings = settings_repo.get_settings(self._conn)
+        self.items_table.set_tax_rate(settings["tax_rate_percent"])
         items = self.items_table.items()
         subtotal_fils = sum_line_items_fils(items)
         if self.with_installation_checkbox.isChecked():
             subtotal_fils += settings["default_installation_fee_fils"]
-        tax = compute_tax(subtotal_fils, settings["tax_rate_percent"], self.tax_included_checkbox.isChecked())
+        # The items table always yields ex-tax unit prices (even in
+        # tax-included entry mode), so tax is always added on top here.
+        tax = compute_tax(subtotal_fils, settings["tax_rate_percent"], False)
         deposit_fils = self.deposit_input.fils_value()
         remaining_fils = max(0, tax.grand_total_fils - min(deposit_fils, tax.grand_total_fils))
         self.remaining_preview_label.setText(

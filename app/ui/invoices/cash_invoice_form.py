@@ -31,6 +31,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.domain.invoice_calc import sum_line_items_fils
+from app.domain.money import fils_to_bhd_str
+from app.domain.tax import compute_tax
 from app.repositories import invoices_repo, settings_repo
 from app.services import invoice_service
 from app.ui.invoices.invoice_print import export_invoice_pdf
@@ -99,24 +102,29 @@ class CashInvoiceForm(QWidget):
         self.delivery_date_input.setCalendarPopup(True)
         self.delivery_date_input.setDisplayFormat("yyyy-MM-dd")
         self.delivery_date_input.setEnabled(False)
-        delivery_date_row = QHBoxLayout()
-        delivery_date_row.addLayout(_labeled("تاريخ التوصيل", self.delivery_date_input))
-        delivery_date_row.addStretch()
-        form.addLayout(delivery_date_row)
-
         self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
+        self.tax_included_checkbox.stateChanged.connect(self._on_tax_included_changed)
         self.payment_method_combo = PaymentMethodCombo()
         self.payment_method_combo.setMaximumWidth(240)
-        payment_row = QHBoxLayout()
-        payment_row.addLayout(_labeled("طريقة الدفع *", self.payment_method_combo))
-        payment_row.addWidget(self.tax_included_checkbox)
-        payment_row.addStretch()
-        form.addLayout(payment_row)
+        details_row = QHBoxLayout()
+        details_row.addLayout(_labeled("تاريخ التوصيل", self.delivery_date_input))
+        details_row.addLayout(_labeled("طريقة الدفع *", self.payment_method_combo))
+        details_row.addWidget(self.tax_included_checkbox)
+        details_row.addStretch()
+        form.addLayout(details_row)
 
         layout.addLayout(form)
 
         self.items_table = LineItemsTable(quantity_label="الكمية", conn=conn)
+        self.items_table.set_tax_rate(settings_repo.get_settings(conn)["tax_rate_percent"])
+        self.items_table.items_changed.connect(self._update_remaining_preview)
+        self.deposit_input.valueChanged.connect(self._update_remaining_preview)
         layout.addWidget(self.items_table)
+
+        self.remaining_preview_label = QLabel()
+        self.remaining_preview_label.setObjectName("statValueNet")
+        layout.addWidget(self.remaining_preview_label)
+        self._update_remaining_preview()
 
         self._dirty_tracker = DirtyTracker(self)
         self._dirty_tracker.watch(
@@ -211,6 +219,25 @@ class CashInvoiceForm(QWidget):
         self._reset_form()
         self._dirty_tracker.mark_clean()
 
+    # --------------------------------------------------------------- tax
+    def _on_tax_included_changed(self, *_args) -> None:
+        self.items_table.set_tax_included(self.tax_included_checkbox.isChecked())
+        self._update_remaining_preview()
+
+    def _update_remaining_preview(self, *_args) -> None:
+        settings = settings_repo.get_settings(self._conn)
+        self.items_table.set_tax_rate(settings["tax_rate_percent"])
+        subtotal_fils = sum_line_items_fils(self.items_table.items())
+        # The items table always yields ex-tax unit prices (even in
+        # tax-included entry mode), so tax is always added on top here.
+        tax = compute_tax(subtotal_fils, settings["tax_rate_percent"], False)
+        deposit_fils = self.deposit_input.fils_value()
+        remaining_fils = max(0, tax.grand_total_fils - min(deposit_fils, tax.grand_total_fils))
+        self.remaining_preview_label.setText(
+            f"الإجمالي: {fils_to_bhd_str(tax.grand_total_fils)} د.ب"
+            f"  -  المتبقي بعد المقدم: {fils_to_bhd_str(remaining_fils)} د.ب"
+        )
+
     # ---------------------------------------------------------- delivery
     def _on_delivery_toggled(self, checked: bool) -> None:
         self.deposit_input.setEnabled(checked)
@@ -236,7 +263,9 @@ class CashInvoiceForm(QWidget):
                     self._user,
                     phone=self.phone_input.text().strip(),
                     items=items,
-                    tax_included=self.tax_included_checkbox.isChecked(),
+                    # The table always yields ex-tax unit prices regardless
+                    # of the entry-mode checkbox, so tax must be added on top.
+                    tax_included=False,
                     payment_method=self.payment_method_combo.selected_method(),
                     override_password_prompt=lambda: prompt_override_password(
                         "إنشاء فاتورة قطع جاهزة", self
@@ -259,7 +288,7 @@ class CashInvoiceForm(QWidget):
                     self._browsed_id,
                     phone=self.phone_input.text().strip(),
                     items=items,
-                    tax_included=self.tax_included_checkbox.isChecked(),
+                    tax_included=False,
                     override_password_prompt=lambda: prompt_override_password("تعديل فاتورة", self),
                     customer_name=self.customer_name_input.text().strip() or None,
                     payment_method=self.payment_method_combo.selected_method(),
@@ -292,6 +321,7 @@ class CashInvoiceForm(QWidget):
         self.tax_included_checkbox.setChecked(False)
         self.payment_method_combo.setCurrentIndex(0)
         self.items_table.clear_rows()
+        self._update_remaining_preview()
 
     def _export(self) -> None:
         target_id = self._browsed_id or self._last_invoice_id

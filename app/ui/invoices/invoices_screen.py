@@ -56,6 +56,13 @@ class InvoicesScreen(QWidget):
         return self.cash_form if self.tabs.currentIndex() == _CASH_TAB else self.installation_form
 
     def _on_invoice_saved(self, invoice_id: int) -> None:
+        form = self.sender()
+        if form is not None and form._browsed_id is None:
+            # A brand-new invoice was saved and the form reset itself to a
+            # blank one - advance the navigator straight to the next number.
+            self._current_id = None
+            self._refresh_next_number_preview()
+            return
         header = invoices_repo.get_invoice(self._conn, invoice_id)["header"]
         self._current_id = invoice_id
         self._refresh_navigator_for_current(header["invoice_no"])
