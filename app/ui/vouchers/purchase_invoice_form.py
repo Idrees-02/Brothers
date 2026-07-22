@@ -65,6 +65,7 @@ class PurchaseInvoiceFormScreen(QWidget):
 
         self.items_table = LineItemsTable(quantity_label="الكمية", conn=conn)
         self.items_table.set_tax_rate(settings_repo.get_settings(conn)["tax_rate_percent"])
+        self.items_table.add_row()
         layout.addWidget(self.items_table)
 
         buttons_row = QHBoxLayout()
@@ -109,6 +110,7 @@ class PurchaseInvoiceFormScreen(QWidget):
         self.note_input.clear()
         self.tax_included_checkbox.setChecked(False)
         self.items_table.clear_rows()
+        self.items_table.add_row()
         self._refresh_table()
 
     def _refresh_table(self) -> None:

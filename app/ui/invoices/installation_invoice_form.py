@@ -33,7 +33,7 @@ from app.domain.money import fils_to_bhd_str
 from app.domain.tax import compute_tax
 from app.repositories import invoices_repo, settings_repo
 from app.services import invoice_service
-from app.ui.invoices.invoice_print import export_invoice_pdf
+from app.ui.invoices.invoice_print import export_invoice_pdf, show_print_dialog
 from app.ui.widgets.card import Card, scrollable
 from app.ui.widgets.compact_form import labeled_field as _labeled
 from app.ui.widgets.dirty_tracker import DirtyTracker
@@ -78,43 +78,6 @@ class InstallationInvoiceForm(QWidget):
         self.address_input = QLineEdit()
         form.addLayout(_labeled("العنوان (اختياري)", self.address_input))
 
-        # Each of these rows pairs one compact field (fixed width, so it
-        # doesn't balloon to fill the whole row as the lone Expanding widget)
-        # with its related checkbox directly beside it, then a trailing
-        # stretch - field and checkbox sit snug together instead of the
-        # field spanning most of the row with the checkbox stranded far away.
-        self.with_installation_checkbox = QCheckBox("مع التركيب (تُضاف رسوم التركيب)")
-        self.with_installation_checkbox.stateChanged.connect(self._update_remaining_preview)
-        self.deposit_input = MoneySpinBox()
-        self.deposit_input.setMaximumWidth(240)
-        self.deposit_input.valueChanged.connect(self._update_remaining_preview)
-        deposit_row = QHBoxLayout()
-        deposit_row.addLayout(_labeled("المقدم (يُدفع عند الحجز)", self.deposit_input))
-        deposit_row.addWidget(self.with_installation_checkbox)
-        deposit_row.addStretch()
-        form.addLayout(deposit_row)
-
-        self.schedule_installation_checkbox = QCheckBox("تحديد تاريخ التركيب الآن")
-        self.schedule_installation_checkbox.setChecked(True)
-        self.installation_date_input = QDateEdit(QDate.currentDate())
-        self.installation_date_input.setMaximumWidth(240)
-        self.installation_date_input.setCalendarPopup(True)
-        self.installation_date_input.setDisplayFormat("yyyy-MM-dd")
-        self.schedule_installation_checkbox.stateChanged.connect(
-            lambda checked: self.installation_date_input.setEnabled(bool(checked) and self._browsed_id is None)
-        )
-        self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
-        self.tax_included_checkbox.stateChanged.connect(self._on_tax_included_changed)
-        self.payment_method_combo = PaymentMethodCombo()
-        self.payment_method_combo.setMaximumWidth(240)
-        details_row = QHBoxLayout()
-        details_row.addLayout(_labeled("تاريخ التركيب", self.installation_date_input))
-        details_row.addWidget(self.schedule_installation_checkbox)
-        details_row.addLayout(_labeled("طريقة دفع المقدم *", self.payment_method_combo))
-        details_row.addWidget(self.tax_included_checkbox)
-        details_row.addStretch()
-        form.addLayout(details_row)
-
         layout.addLayout(form)
 
         self.items_table = LineItemsTable(quantity_label="المتر المربع", conn=conn)
@@ -122,9 +85,34 @@ class InstallationInvoiceForm(QWidget):
         self.items_table.items_changed.connect(self._update_remaining_preview)
         layout.addWidget(self.items_table)
 
+        # Deposit/installation/payment details all live in one compact row
+        # below the items table (and its add/remove buttons).
+        self.deposit_input = MoneySpinBox()
+        self.deposit_input.setMaximumWidth(240)
+        self.deposit_input.valueChanged.connect(self._update_remaining_preview)
+        self.with_installation_checkbox = QCheckBox("مع التركيب (تُضاف رسوم التركيب)")
+        self.with_installation_checkbox.stateChanged.connect(self._update_remaining_preview)
+        self.installation_date_input = QDateEdit(QDate.currentDate())
+        self.installation_date_input.setMaximumWidth(240)
+        self.installation_date_input.setCalendarPopup(True)
+        self.installation_date_input.setDisplayFormat("yyyy-MM-dd")
+        self.payment_method_combo = PaymentMethodCombo()
+        self.payment_method_combo.setMaximumWidth(240)
+        self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
+        self.tax_included_checkbox.stateChanged.connect(self._on_tax_included_changed)
+        details_row = QHBoxLayout()
+        details_row.addLayout(_labeled("المقدم (يُدفع عند الحجز)", self.deposit_input))
+        details_row.addWidget(self.with_installation_checkbox)
+        details_row.addLayout(_labeled("تاريخ التركيب", self.installation_date_input))
+        details_row.addLayout(_labeled("طريقة دفع المقدم *", self.payment_method_combo))
+        details_row.addWidget(self.tax_included_checkbox)
+        details_row.addStretch()
+        layout.addLayout(details_row)
+
         self.remaining_preview_label = QLabel()
         self.remaining_preview_label.setObjectName("statValueNet")
         layout.addWidget(self.remaining_preview_label)
+        self.items_table.add_row()
         self._update_remaining_preview()
 
         self._dirty_tracker = DirtyTracker(self)
@@ -135,7 +123,6 @@ class InstallationInvoiceForm(QWidget):
             self.address_input,
             self.with_installation_checkbox,
             self.deposit_input,
-            self.schedule_installation_checkbox,
             self.installation_date_input,
             self.tax_included_checkbox,
             self.payment_method_combo,
@@ -147,11 +134,9 @@ class InstallationInvoiceForm(QWidget):
         self.save_button.clicked.connect(self._save)
         buttons_row.addWidget(self.save_button)
 
-        self.new_invoice_button = QPushButton("فاتورة جديدة")
-        self.new_invoice_button.setObjectName("secondaryButton")
-        self.new_invoice_button.clicked.connect(self.start_new)
-        self.new_invoice_button.setEnabled(False)
-        buttons_row.addWidget(self.new_invoice_button)
+        self.save_print_button = QPushButton("طباعة وحفظ الفاتورة")
+        self.save_print_button.clicked.connect(self._save_and_print)
+        buttons_row.addWidget(self.save_print_button)
 
         self.export_button = QPushButton("تصدير PDF")
         self.export_button.clicked.connect(self._export)
@@ -183,7 +168,6 @@ class InstallationInvoiceForm(QWidget):
             self.address_input.setText(header["address"] or "")
             self.with_installation_checkbox.setChecked(bool(header["with_installation"]))
             self.deposit_input.set_fils_value(header["deposit_fils"])
-            self.schedule_installation_checkbox.setChecked(header["installation_date"] is not None)
             if header["installation_date"]:
                 self.installation_date_input.setDate(
                     QDate.fromString(header["installation_date"], "yyyy-MM-dd")
@@ -201,11 +185,9 @@ class InstallationInvoiceForm(QWidget):
         # this path (see module docstring) - shown for context, not blank.
         self.with_installation_checkbox.setEnabled(False)
         self.deposit_input.setEnabled(False)
-        self.schedule_installation_checkbox.setEnabled(False)
         self.installation_date_input.setEnabled(False)
 
         self.save_button.setText("حفظ التعديلات")
-        self.new_invoice_button.setEnabled(True)
         self.export_button.setEnabled(True)
 
     def start_new(self) -> None:
@@ -214,16 +196,20 @@ class InstallationInvoiceForm(QWidget):
         self._browsed_id = None
         self.with_installation_checkbox.setEnabled(True)
         self.deposit_input.setEnabled(True)
-        self.schedule_installation_checkbox.setEnabled(True)
         self.installation_date_input.setEnabled(True)
         self.save_button.setText("حفظ الفاتورة")
-        self.new_invoice_button.setEnabled(False)
         self.export_button.setEnabled(self._last_invoice_id is not None)
         self._reset_form()
         self._dirty_tracker.mark_clean()
 
     # ------------------------------------------------------------ saving
     def _save(self) -> None:
+        self._do_save(then_print=False)
+
+    def _save_and_print(self) -> None:
+        self._do_save(then_print=True)
+
+    def _do_save(self, then_print: bool) -> None:
         items = self.items_table.items()
         try:
             if self._browsed_id is None:
@@ -244,11 +230,7 @@ class InstallationInvoiceForm(QWidget):
                         "إنشاء فاتورة تركيب وتفصيل", self
                     ),
                     address=self.address_input.text().strip() or None,
-                    installation_date=(
-                        self.installation_date_input.date().toString("yyyy-MM-dd")
-                        if self.schedule_installation_checkbox.isChecked()
-                        else None
-                    ),
+                    installation_date=self.installation_date_input.date().toString("yyyy-MM-dd"),
                 )
             else:
                 invoice_service.update_invoice(
@@ -276,6 +258,8 @@ class InstallationInvoiceForm(QWidget):
         QMessageBox.information(
             self, "تم الحفظ", f"تم إنشاء الفاتورة رقم {header['invoice_no']} - الحالة: {status_label}"
         )
+        if then_print:
+            self._print_invoice(invoice_id)
 
         if self._browsed_id is None:
             self._reset_form()
@@ -293,10 +277,15 @@ class InstallationInvoiceForm(QWidget):
         self.deposit_input.setValue(0)
         self.tax_included_checkbox.setChecked(False)
         self.payment_method_combo.setCurrentIndex(0)
-        self.schedule_installation_checkbox.setChecked(True)
         self.installation_date_input.setDate(QDate.currentDate())
         self.items_table.clear_rows()
+        self.items_table.add_row()
         self._update_remaining_preview()
+
+    def _print_invoice(self, invoice_id: int) -> None:
+        invoice = invoices_repo.get_invoice(self._conn, invoice_id)
+        shop_name = settings_repo.get_settings(self._conn)["shop_name_ar"]
+        show_print_dialog(self, invoice, shop_name)
 
     def _on_tax_included_changed(self, *_args) -> None:
         self.items_table.set_tax_included(self.tax_included_checkbox.isChecked())

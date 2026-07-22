@@ -36,7 +36,7 @@ from app.domain.money import fils_to_bhd_str
 from app.domain.tax import compute_tax
 from app.repositories import invoices_repo, settings_repo
 from app.services import invoice_service
-from app.ui.invoices.invoice_print import export_invoice_pdf
+from app.ui.invoices.invoice_print import export_invoice_pdf, show_print_dialog
 from app.ui.widgets.card import Card, scrollable
 from app.ui.widgets.compact_form import labeled_field as _labeled
 from app.ui.widgets.dirty_tracker import DirtyTracker
@@ -84,46 +84,43 @@ class CashInvoiceForm(QWidget):
         self.address_input = QLineEdit()
         form.addLayout(_labeled("العنوان (للتوصيل)", self.address_input))
 
-        # Same "field on the right, its checkbox directly beside it" layout
-        # as InstallationInvoiceForm - see the comment there.
-        self.with_delivery_checkbox = QCheckBox("مع التوصيل")
-        self.with_delivery_checkbox.toggled.connect(self._on_delivery_toggled)
-        self.deposit_input = MoneySpinBox()
-        self.deposit_input.setMaximumWidth(240)
-        self.deposit_input.setEnabled(False)
-        deposit_row = QHBoxLayout()
-        deposit_row.addLayout(_labeled("المقدم (يُدفع عند الحجز)", self.deposit_input))
-        deposit_row.addWidget(self.with_delivery_checkbox)
-        deposit_row.addStretch()
-        form.addLayout(deposit_row)
-
-        self.delivery_date_input = QDateEdit(QDate.currentDate())
-        self.delivery_date_input.setMaximumWidth(240)
-        self.delivery_date_input.setCalendarPopup(True)
-        self.delivery_date_input.setDisplayFormat("yyyy-MM-dd")
-        self.delivery_date_input.setEnabled(False)
-        self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
-        self.tax_included_checkbox.stateChanged.connect(self._on_tax_included_changed)
-        self.payment_method_combo = PaymentMethodCombo()
-        self.payment_method_combo.setMaximumWidth(240)
-        details_row = QHBoxLayout()
-        details_row.addLayout(_labeled("تاريخ التوصيل", self.delivery_date_input))
-        details_row.addLayout(_labeled("طريقة الدفع *", self.payment_method_combo))
-        details_row.addWidget(self.tax_included_checkbox)
-        details_row.addStretch()
-        form.addLayout(details_row)
-
         layout.addLayout(form)
 
         self.items_table = LineItemsTable(quantity_label="الكمية", conn=conn)
         self.items_table.set_tax_rate(settings_repo.get_settings(conn)["tax_rate_percent"])
         self.items_table.items_changed.connect(self._update_remaining_preview)
-        self.deposit_input.valueChanged.connect(self._update_remaining_preview)
         layout.addWidget(self.items_table)
+
+        # Deposit/delivery/payment details all live in one compact row below
+        # the items table (and its add/remove buttons).
+        self.deposit_input = MoneySpinBox()
+        self.deposit_input.setMaximumWidth(240)
+        self.deposit_input.setEnabled(False)
+        self.deposit_input.valueChanged.connect(self._update_remaining_preview)
+        self.with_delivery_checkbox = QCheckBox("مع التوصيل")
+        self.with_delivery_checkbox.toggled.connect(self._on_delivery_toggled)
+        self.delivery_date_input = QDateEdit(QDate.currentDate())
+        self.delivery_date_input.setMaximumWidth(240)
+        self.delivery_date_input.setCalendarPopup(True)
+        self.delivery_date_input.setDisplayFormat("yyyy-MM-dd")
+        self.delivery_date_input.setEnabled(False)
+        self.payment_method_combo = PaymentMethodCombo()
+        self.payment_method_combo.setMaximumWidth(240)
+        self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
+        self.tax_included_checkbox.stateChanged.connect(self._on_tax_included_changed)
+        details_row = QHBoxLayout()
+        details_row.addLayout(_labeled("المقدم (يُدفع عند الحجز)", self.deposit_input))
+        details_row.addWidget(self.with_delivery_checkbox)
+        details_row.addLayout(_labeled("تاريخ التوصيل", self.delivery_date_input))
+        details_row.addLayout(_labeled("طريقة الدفع *", self.payment_method_combo))
+        details_row.addWidget(self.tax_included_checkbox)
+        details_row.addStretch()
+        layout.addLayout(details_row)
 
         self.remaining_preview_label = QLabel()
         self.remaining_preview_label.setObjectName("statValueNet")
         layout.addWidget(self.remaining_preview_label)
+        self.items_table.add_row()
         self._update_remaining_preview()
 
         self._dirty_tracker = DirtyTracker(self)
@@ -145,11 +142,9 @@ class CashInvoiceForm(QWidget):
         self.save_button.clicked.connect(self._save)
         buttons_row.addWidget(self.save_button)
 
-        self.new_invoice_button = QPushButton("فاتورة جديدة")
-        self.new_invoice_button.setObjectName("secondaryButton")
-        self.new_invoice_button.clicked.connect(self.start_new)
-        self.new_invoice_button.setEnabled(False)
-        buttons_row.addWidget(self.new_invoice_button)
+        self.save_print_button = QPushButton("طباعة وحفظ الفاتورة")
+        self.save_print_button.clicked.connect(self._save_and_print)
+        buttons_row.addWidget(self.save_print_button)
 
         self.export_button = QPushButton("تصدير PDF")
         self.export_button.clicked.connect(self._export)
@@ -203,7 +198,6 @@ class CashInvoiceForm(QWidget):
         self.delivery_date_input.setEnabled(False)
 
         self.save_button.setText("حفظ التعديلات")
-        self.new_invoice_button.setEnabled(True)
         self.export_button.setEnabled(True)
 
     def start_new(self) -> None:
@@ -214,7 +208,6 @@ class CashInvoiceForm(QWidget):
         self.address_input.setEnabled(True)
         self.with_delivery_checkbox.setEnabled(True)
         self.save_button.setText("حفظ الفاتورة")
-        self.new_invoice_button.setEnabled(False)
         self.export_button.setEnabled(self._last_invoice_id is not None)
         self._reset_form()
         self._dirty_tracker.mark_clean()
@@ -251,6 +244,12 @@ class CashInvoiceForm(QWidget):
 
     # ------------------------------------------------------------ saving
     def _save(self) -> None:
+        self._do_save(then_print=False)
+
+    def _save_and_print(self) -> None:
+        self._do_save(then_print=True)
+
+    def _do_save(self, then_print: bool) -> None:
         items = self.items_table.items()
         with_delivery = self.with_delivery_checkbox.isChecked()
         if with_delivery and not self.area_region_input.text().strip():
@@ -302,6 +301,8 @@ class CashInvoiceForm(QWidget):
         self.export_button.setEnabled(True)
         invoice_no = invoices_repo.get_invoice(self._conn, invoice_id)["header"]["invoice_no"]
         QMessageBox.information(self, "تم الحفظ", f"تم إنشاء الفاتورة رقم {invoice_no}")
+        if then_print:
+            self._print_invoice(invoice_id)
 
         if self._browsed_id is None:
             self._reset_form()
@@ -321,7 +322,13 @@ class CashInvoiceForm(QWidget):
         self.tax_included_checkbox.setChecked(False)
         self.payment_method_combo.setCurrentIndex(0)
         self.items_table.clear_rows()
+        self.items_table.add_row()
         self._update_remaining_preview()
+
+    def _print_invoice(self, invoice_id: int) -> None:
+        invoice = invoices_repo.get_invoice(self._conn, invoice_id)
+        shop_name = settings_repo.get_settings(self._conn)["shop_name_ar"]
+        show_print_dialog(self, invoice, shop_name)
 
     def _export(self) -> None:
         target_id = self._browsed_id or self._last_invoice_id
