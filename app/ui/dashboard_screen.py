@@ -138,20 +138,7 @@ class DashboardScreen(QWidget):
         self._watermark_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if watermark_path.exists():
             self._watermark_label.setPixmap(QPixmap(str(watermark_path)))
-        # Program title flanking the centered logo: in this RTL layout the
-        # first widget lands on the logo's right, the last on its left.
-        title_row = QHBoxLayout()
-        title_row.setSpacing(18)
-        title_right = QLabel("الاخوين")
-        title_right.setObjectName("dashboardTitleLabel")
-        title_left = QLabel("للسجاد")
-        title_left.setObjectName("dashboardTitleLabel")
-        title_row.addStretch(1)
-        title_row.addWidget(title_right)
-        title_row.addWidget(self._watermark_label)
-        title_row.addWidget(title_left)
-        title_row.addStretch(1)
-        self._layout.addLayout(title_row)
+        self._layout.addWidget(self._watermark_label)
         self._layout.addStretch(1)
 
         self._quick_access_label = QLabel("الوصول السريع")
