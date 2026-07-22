@@ -7,6 +7,7 @@ import sqlite3
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -24,8 +25,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.repositories import employees_repo, invoices_repo
+from app.domain.money import fils_to_bhd_str
+from app.repositories import employees_repo, invoices_repo, settings_repo
 from app.services import invoice_service
+from app.ui.vouchers.voucher_print import build_report_html, data_table_fragment, show_print_dialog_html
 from app.ui.widgets.card import Card
 from app.ui.widgets.money_spinbox import MoneySpinBox
 from app.ui.widgets.override_dialog import prompt_override_password
@@ -146,7 +149,14 @@ class InstallationScheduleScreen(QWidget):
         self.date_input.setDisplayFormat("yyyy-MM-dd")
         self.date_input.dateChanged.connect(self._refresh_table)
         date_row.addWidget(self.date_input)
+        self.pending_only_checkbox = QCheckBox("الفواتير المعلقة (بدون تاريخ تركيب)")
+        self.pending_only_checkbox.toggled.connect(self._on_pending_toggled)
+        date_row.addWidget(self.pending_only_checkbox)
         date_row.addStretch()
+        print_button = QPushButton("طباعة الكشف حسب الفني")
+        print_button.setObjectName("secondaryButton")
+        print_button.clicked.connect(self._print_by_employee)
+        date_row.addWidget(print_button)
         layout.addLayout(date_row)
 
         self.table = QTableWidget(0, 7)
@@ -174,9 +184,18 @@ class InstallationScheduleScreen(QWidget):
         self._employee_ids = [e["id"] for e in employees]
         return [e["full_name"] for e in employees]
 
-    def _refresh_table(self) -> None:
+    def _on_pending_toggled(self, checked: bool) -> None:
+        self.date_input.setEnabled(not checked)
+        self._refresh_table()
+
+    def _current_rows(self) -> list[sqlite3.Row]:
+        if self.pending_only_checkbox.isChecked():
+            return invoices_repo.list_unscheduled_installations(self._conn)
         work_date = self.date_input.date().toString("yyyy-MM-dd")
-        rows = invoice_service.list_installations_for_date(self._conn, work_date)
+        return invoice_service.list_installations_for_date(self._conn, work_date)
+
+    def _refresh_table(self) -> None:
+        rows = self._current_rows()
         self._row_invoice_ids = [row["id"] for row in rows]
         employee_names = self._employee_names()
 
@@ -211,6 +230,66 @@ class InstallationScheduleScreen(QWidget):
         # assigned technician's name - gets vertically clipped). Size rows
         # from actual cell-widget content instead.
         self.table.resizeRowsToContents()
+
+    def _print_by_employee(self) -> None:
+        """Prints the current view's installations grouped by the assigned
+        installer - each technician's invoices listed together (unassigned
+        ones collected at the end), with installation details, remaining
+        balance, and customer info per invoice."""
+        rows = self._current_rows()
+        if not rows:
+            QMessageBox.information(self, "تنبيه", "لا توجد فواتير لعرضها")
+            return
+
+        paid_by_invoice = {
+            r["invoice_id"]: r["paid_fils"]
+            for r in self._conn.execute(
+                """SELECT invoice_id, COALESCE(SUM(amount_fils), 0) AS paid_fils
+                   FROM invoice_payments GROUP BY invoice_id"""
+            ).fetchall()
+        }
+
+        groups: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            key = row["assigned_employee_name"] or _UNASSIGNED
+            groups.setdefault(key, []).append(row)
+
+        # Assigned technicians first (each with their own invoices bundled
+        # together), unassigned invoices at the end.
+        ordered_names = [name for name in groups if name != _UNASSIGNED] + (
+            [_UNASSIGNED] if _UNASSIGNED in groups else []
+        )
+
+        sections = []
+        for name in ordered_names:
+            sections.append(f"<h3>الفني: {name}</h3>")
+            sections.append(
+                data_table_fragment(
+                    ["رقم الفاتورة", "النوع", "الزبون", "الهاتف", "المنطقة", "العنوان",
+                     "الإجمالي", "المتبقي", "الحالة"],
+                    [
+                        [
+                            row["invoice_no"],
+                            _kind_label(row),
+                            row["customer_name"] or "",
+                            row["phone"],
+                            row["area_region"] or "",
+                            row["address"] or "",
+                            f"{fils_to_bhd_str(row['grand_total_fils'])} د.ب",
+                            f"{fils_to_bhd_str(max(0, row['grand_total_fils'] - paid_by_invoice.get(row['id'], 0)))} د.ب",
+                            _STATUS_LABEL.get(row["installation_status"], ""),
+                        ]
+                        for row in groups[name]
+                    ],
+                )
+            )
+
+        if self.pending_only_checkbox.isChecked():
+            title = "كشف التركيبات المعلقة (بدون تاريخ) حسب الفني"
+        else:
+            title = f"كشف تركيبات يوم {self.date_input.date().toString('yyyy-MM-dd')} حسب الفني"
+        shop_name = settings_repo.get_settings(self._conn)["shop_name_ar"]
+        show_print_dialog_html(self, build_report_html(shop_name, title, sections))
 
     def _assign(self, invoice_id: int, combo: QComboBox) -> None:
         selected_text = combo.currentText()

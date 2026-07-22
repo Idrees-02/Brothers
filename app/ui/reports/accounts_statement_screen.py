@@ -6,6 +6,7 @@ import sqlite3
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -48,9 +49,21 @@ class AccountsStatementScreen(QWidget):
         self.new_account_input.setPlaceholderText("اسم الحساب الجديد")
         self.new_account_input.returnPressed.connect(self._add_account)
         add_account_row.addWidget(self.new_account_input)
+        # Editable so the owner can type a brand-new type on the spot - it
+        # then joins the dropdown for every account created after it.
+        self.account_type_combo = QComboBox()
+        self.account_type_combo.setEditable(True)
+        self.account_type_combo.lineEdit().setPlaceholderText("نوع الحساب")
+        self._reload_account_types()
+        add_account_row.addWidget(self.account_type_combo)
         add_account_button = QPushButton("إضافة حساب")
         add_account_button.clicked.connect(self._add_account)
         add_account_row.addWidget(add_account_button)
+        self.set_type_button = QPushButton("تغيير نوع الحساب المحدد")
+        self.set_type_button.setObjectName("secondaryButton")
+        self.set_type_button.setEnabled(False)
+        self.set_type_button.clicked.connect(self._set_selected_type)
+        add_account_row.addWidget(self.set_type_button)
         self.toggle_active_button = QPushButton("تعطيل الحساب المحدد")
         self.toggle_active_button.setObjectName("secondaryButton")
         self.toggle_active_button.setEnabled(False)
@@ -63,8 +76,8 @@ class AccountsStatementScreen(QWidget):
         add_account_row.addWidget(print_button)
         layout.addLayout(add_account_row)
 
-        self.accounts_table = QTableWidget(0, 3)
-        self.accounts_table.setHorizontalHeaderLabels(["الحساب", "الرصيد", "الحالة"])
+        self.accounts_table = QTableWidget(0, 4)
+        self.accounts_table.setHorizontalHeaderLabels(["الحساب", "النوع", "الرصيد", "الحالة"])
         self.accounts_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.accounts_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.accounts_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -86,17 +99,34 @@ class AccountsStatementScreen(QWidget):
         super().showEvent(event)
         self._refresh_accounts()
 
+    def _reload_account_types(self) -> None:
+        current = self.account_type_combo.currentText()
+        self.account_type_combo.clear()
+        self.account_type_combo.addItems(accounts_repo.list_account_types(self._conn))
+        self.account_type_combo.setCurrentText(current)
+
     def _add_account(self) -> None:
         name = self.new_account_input.text().strip()
         if not name:
             QMessageBox.warning(self, "تعذر الإضافة", "اسم الحساب مطلوب")
             return
+        account_type = self.account_type_combo.currentText().strip() or None
         try:
-            accounts_repo.create_account(self._conn, name)
+            accounts_repo.create_account(self._conn, name, account_type)
         except Exception as exc:  # noqa: BLE001 - e.g. UNIQUE constraint on a duplicate name
             QMessageBox.warning(self, "تعذر الإضافة", "يوجد حساب بنفس الاسم بالفعل" if "UNIQUE" in str(exc) else str(exc))
             return
         self.new_account_input.clear()
+        self._reload_account_types()
+        self._refresh_accounts()
+
+    def _set_selected_type(self) -> None:
+        row = self.accounts_table.currentRow()
+        if row < 0 or row >= len(self._accounts):
+            return
+        account_type = self.account_type_combo.currentText().strip() or None
+        accounts_repo.set_account_type(self._conn, self._accounts[row]["id"], account_type)
+        self._reload_account_types()
         self._refresh_accounts()
 
     def _toggle_selected_active(self) -> None:
@@ -113,17 +143,20 @@ class AccountsStatementScreen(QWidget):
         self.accounts_table.setRowCount(len(self._accounts))
         for i, account in enumerate(self._accounts):
             self.accounts_table.setItem(i, 0, QTableWidgetItem(account["name"]))
+            self.accounts_table.setItem(i, 1, QTableWidgetItem(account["account_type"] or ""))
             balance = accounts_repo.account_balance_fils(self._conn, account["id"])
-            self.accounts_table.setItem(i, 1, QTableWidgetItem(f"{fils_to_bhd_str(balance)} د.ب"))
+            self.accounts_table.setItem(i, 2, QTableWidgetItem(f"{fils_to_bhd_str(balance)} د.ب"))
             status = "مفعّل" if account["is_active"] else "معطّل"
-            self.accounts_table.setItem(i, 2, QTableWidgetItem(status))
+            self.accounts_table.setItem(i, 3, QTableWidgetItem(status))
         self.transactions_table.setRowCount(0)
         self.toggle_active_button.setEnabled(False)
+        self.set_type_button.setEnabled(False)
 
     def _show_transactions(self) -> None:
         selected_rows = self.accounts_table.selectionModel().selectedRows()
         if not selected_rows:
             self.toggle_active_button.setEnabled(False)
+            self.set_type_button.setEnabled(False)
             self._selected_account_id = None
             return
         row = selected_rows[0].row()
@@ -131,6 +164,7 @@ class AccountsStatementScreen(QWidget):
             return
         account = self._accounts[row]
         self.toggle_active_button.setEnabled(True)
+        self.set_type_button.setEnabled(True)
         self.toggle_active_button.setText(
             "تعطيل الحساب المحدد" if account["is_active"] else "تفعيل الحساب المحدد"
         )
@@ -149,10 +183,11 @@ class AccountsStatementScreen(QWidget):
 
     def _print_statement(self) -> None:
         accounts_fragment = data_table_fragment(
-            ["الحساب", "الرصيد", "الحالة"],
+            ["الحساب", "النوع", "الرصيد", "الحالة"],
             [
                 [
                     account["name"],
+                    account["account_type"] or "",
                     f"{fils_to_bhd_str(accounts_repo.account_balance_fils(self._conn, account['id']))} د.ب",
                     "مفعّل" if account["is_active"] else "معطّل",
                 ]

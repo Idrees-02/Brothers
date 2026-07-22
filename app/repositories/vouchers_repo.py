@@ -196,6 +196,14 @@ def list_purchase_invoices(
     ).fetchall()
 
 
+def settle_purchase_invoice(conn: sqlite3.Connection, purchase_invoice_id: int) -> None:
+    conn.execute(
+        "UPDATE purchase_invoices SET paid_at = datetime('now','localtime') WHERE id = ?",
+        (purchase_invoice_id,),
+    )
+    conn.commit()
+
+
 def void_purchase_invoice(conn: sqlite3.Connection, purchase_invoice_id: int, voided_by_user_id: int) -> None:
     conn.execute(
         "UPDATE purchase_invoices SET voided_at = datetime('now'), voided_by_user_id = ? WHERE id = ?",

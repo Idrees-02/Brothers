@@ -400,6 +400,22 @@ ALTER TABLE invoices ADD COLUMN with_delivery INTEGER NOT NULL DEFAULT 0 CHECK (
 ALTER TABLE settings ADD COLUMN default_delivery_fee_fils INTEGER NOT NULL DEFAULT 5000;
 """
 
+# v10: invoice-level discount (تخفيض), per-invoice account + cash/credit
+# (نقدا/آجل) payment kind on both sales and purchase invoices - credit
+# invoices only enter the financial report once actually paid (purchases
+# track that via paid_at; sales invoices already track payments in
+# invoice_payments) - and a free-text type on accounts (مورد / مالك / عميل /
+# ...) so the owner can tell what each account represents.
+SCHEMA_V10_SQL = """
+ALTER TABLE invoices ADD COLUMN discount_fils INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN account_id INTEGER REFERENCES accounts(id);
+ALTER TABLE invoices ADD COLUMN is_credit INTEGER NOT NULL DEFAULT 0 CHECK (is_credit IN (0,1));
+ALTER TABLE purchase_invoices ADD COLUMN account_id INTEGER REFERENCES accounts(id);
+ALTER TABLE purchase_invoices ADD COLUMN is_credit INTEGER NOT NULL DEFAULT 0 CHECK (is_credit IN (0,1));
+ALTER TABLE purchase_invoices ADD COLUMN paid_at TEXT;
+ALTER TABLE accounts ADD COLUMN account_type TEXT;
+"""
+
 # Ordered list of (version, sql) pairs applied in sequence by migrations.py.
 # Add new (version, sql) tuples here for future schema changes - never edit
 # a SCHEMA_VN_SQL string after it has shipped, since existing databases at
@@ -414,4 +430,5 @@ MIGRATIONS: list[tuple[int, str]] = [
     (7, SCHEMA_V7_SQL),
     (8, SCHEMA_V8_SQL),
     (9, SCHEMA_V9_SQL),
+    (10, SCHEMA_V10_SQL),
 ]

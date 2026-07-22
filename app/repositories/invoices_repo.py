@@ -170,6 +170,22 @@ def list_installations_for_date(conn: sqlite3.Connection, work_date: str) -> lis
     ).fetchall()
 
 
+def list_unscheduled_installations(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Pending installation/delivery invoices with NO installation date -
+    typically ones postponed indefinitely - so they can be found again and
+    rescheduled instead of silently dropping out of every day's schedule."""
+    return conn.execute(
+        """SELECT invoices.*, employees.full_name AS assigned_employee_name
+           FROM invoices
+           LEFT JOIN employees ON employees.id = invoices.assigned_employee_id
+           WHERE (invoices.invoice_type = 'installation' OR invoices.with_delivery = 1)
+             AND invoices.installation_date IS NULL
+             AND invoices.installation_status IN ('pending','postponed')
+             AND invoices.status != 'voided'
+           ORDER BY invoices.created_at""",
+    ).fetchall()
+
+
 def count_installations_for_date(conn: sqlite3.Connection, work_date: str) -> int:
     row = conn.execute(
         """SELECT COUNT(*) AS cnt FROM invoices

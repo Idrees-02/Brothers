@@ -17,7 +17,9 @@ import sqlite3
 from PySide6.QtCore import QDate, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDateEdit,
+    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -34,6 +36,7 @@ from app.domain.tax import compute_tax
 from app.repositories import invoices_repo, settings_repo
 from app.services import invoice_service
 from app.ui.invoices.invoice_print import export_invoice_pdf, show_print_dialog
+from app.ui.widgets.account_combo import AccountCombo
 from app.ui.widgets.card import Card, scrollable
 from app.ui.widgets.compact_form import labeled_field as _labeled
 from app.ui.widgets.dirty_tracker import DirtyTracker
@@ -109,9 +112,36 @@ class InstallationInvoiceForm(QWidget):
         details_row.addStretch()
         layout.addLayout(details_row)
 
+        # Second billing row: discount, per-invoice tax rate, cash/credit
+        # kind, and the account the invoice belongs to.
+        self.discount_input = MoneySpinBox()
+        self.discount_input.setMaximumWidth(240)
+        self.discount_input.valueChanged.connect(self._update_remaining_preview)
+        self.tax_rate_input = QDoubleSpinBox()
+        self.tax_rate_input.setDecimals(2)
+        self.tax_rate_input.setRange(0.0, 100.0)
+        self.tax_rate_input.setSuffix(" %")
+        self.tax_rate_input.setMaximumWidth(120)
+        self.tax_rate_input.setValue(settings_repo.get_settings(conn)["tax_rate_percent"])
+        self.tax_rate_input.valueChanged.connect(self._update_remaining_preview)
+        self.invoice_kind_combo = QComboBox()
+        self.invoice_kind_combo.addItem("نقدا", False)
+        self.invoice_kind_combo.addItem("آجل", True)
+        self.invoice_kind_combo.setMaximumWidth(120)
+        self.account_combo = AccountCombo(conn, allow_empty=True)
+        self.account_combo.setMaximumWidth(240)
+        billing_row = QHBoxLayout()
+        billing_row.addLayout(_labeled("التخفيض", self.discount_input))
+        billing_row.addLayout(_labeled("نسبة الضريبة", self.tax_rate_input))
+        billing_row.addLayout(_labeled("نوع الفاتورة", self.invoice_kind_combo))
+        billing_row.addLayout(_labeled("الحساب", self.account_combo))
+        billing_row.addStretch()
+        layout.addLayout(billing_row)
+
         self.remaining_preview_label = QLabel()
         self.remaining_preview_label.setObjectName("statValueNet")
         layout.addWidget(self.remaining_preview_label)
+        self.tax_included_checkbox.setChecked(True)  # default: totals entered tax-inclusive
         self.items_table.add_row()
         self._update_remaining_preview()
 
@@ -126,6 +156,10 @@ class InstallationInvoiceForm(QWidget):
             self.installation_date_input,
             self.tax_included_checkbox,
             self.payment_method_combo,
+            self.discount_input,
+            self.tax_rate_input,
+            self.invoice_kind_combo,
+            self.account_combo,
             self.items_table,
         )
 
@@ -174,6 +208,11 @@ class InstallationInvoiceForm(QWidget):
                 )
             self.tax_included_checkbox.setChecked(bool(header["tax_included"]))
             self.payment_method_combo.set_method(header["payment_method"])
+            self.discount_input.set_fils_value(header["discount_fils"])
+            self.tax_rate_input.setValue(header["tax_rate_percent"])
+            self.invoice_kind_combo.setCurrentIndex(1 if header["is_credit"] else 0)
+            self.account_combo.set_account(header["account_id"])
+            self.items_table.set_tax_rate(header["tax_rate_percent"])
             self.items_table.clear_rows()
             for item in invoice["items"]:
                 self.items_table.add_row(
@@ -231,6 +270,10 @@ class InstallationInvoiceForm(QWidget):
                     ),
                     address=self.address_input.text().strip() or None,
                     installation_date=self.installation_date_input.date().toString("yyyy-MM-dd"),
+                    discount_fils=self.discount_input.fils_value(),
+                    tax_rate_percent=self.tax_rate_input.value(),
+                    account_id=self.account_combo.selected_account_id(),
+                    is_credit=bool(self.invoice_kind_combo.currentData()),
                 )
             else:
                 invoice_service.update_invoice(
@@ -245,6 +288,10 @@ class InstallationInvoiceForm(QWidget):
                     address=self.address_input.text().strip() or None,
                     area_region=self.area_region_input.text().strip() or None,
                     payment_method=self.payment_method_combo.selected_method(),
+                    discount_fils=self.discount_input.fils_value(),
+                    tax_rate_percent=self.tax_rate_input.value(),
+                    account_id=self.account_combo.selected_account_id(),
+                    is_credit=bool(self.invoice_kind_combo.currentData()),
                 )
                 invoice_id = self._browsed_id
         except Exception as exc:  # noqa: BLE001 - surface any domain/service error to the user
@@ -275,9 +322,14 @@ class InstallationInvoiceForm(QWidget):
         self.area_region_input.clear()
         self.with_installation_checkbox.setChecked(False)
         self.deposit_input.setValue(0)
-        self.tax_included_checkbox.setChecked(False)
+        self.tax_included_checkbox.setChecked(True)
         self.payment_method_combo.setCurrentIndex(0)
         self.installation_date_input.setDate(QDate.currentDate())
+        self.discount_input.setValue(0)
+        self.tax_rate_input.setValue(settings_repo.get_settings(self._conn)["tax_rate_percent"])
+        self.invoice_kind_combo.setCurrentIndex(0)
+        self.account_combo.refresh()
+        self.account_combo.setCurrentIndex(0)
         self.items_table.clear_rows()
         self.items_table.add_row()
         self._update_remaining_preview()
@@ -293,14 +345,16 @@ class InstallationInvoiceForm(QWidget):
 
     def _update_remaining_preview(self, *_args) -> None:
         settings = settings_repo.get_settings(self._conn)
-        self.items_table.set_tax_rate(settings["tax_rate_percent"])
+        rate = self.tax_rate_input.value()
+        self.items_table.set_tax_rate(rate)
         items = self.items_table.items()
         subtotal_fils = sum_line_items_fils(items)
         if self.with_installation_checkbox.isChecked():
             subtotal_fils += settings["default_installation_fee_fils"]
+        subtotal_fils -= min(self.discount_input.fils_value(), subtotal_fils)
         # The items table always yields ex-tax unit prices (even in
         # tax-included entry mode), so tax is always added on top here.
-        tax = compute_tax(subtotal_fils, settings["tax_rate_percent"], False)
+        tax = compute_tax(subtotal_fils, rate, False)
         deposit_fils = self.deposit_input.fils_value()
         remaining_fils = max(0, tax.grand_total_fils - min(deposit_fils, tax.grand_total_fils))
         self.remaining_preview_label.setText(

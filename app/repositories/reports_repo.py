@@ -70,11 +70,27 @@ def _sum_fils(conn: sqlite3.Connection, sql: str, start_date: str, end_date: str
 
 def period_financial_summary(conn: sqlite3.Connection, start_date: str, end_date: str) -> dict:
     """Combined income vs. expense summary for a date range - the basis of
-    the daily/weekly/monthly financial report screen."""
+    the daily/weekly/monthly financial report screen.
+
+    Credit (آجل) invoices are cash-basis: a credit sales invoice counts only
+    through the payments actually received on it (by payment date), and a
+    credit purchase invoice counts only once settled (by its paid_at date) -
+    an unpaid credit invoice never inflates the report."""
     invoice_income_fils = _sum_fils(
         conn,
         """SELECT COALESCE(SUM(grand_total_fils), 0) FROM invoices
-           WHERE status != 'voided' AND date(created_at) BETWEEN date(?) AND date(?)""",
+           WHERE status != 'voided' AND is_credit = 0
+             AND date(created_at) BETWEEN date(?) AND date(?)""",
+        start_date,
+        end_date,
+    )
+    invoice_income_fils += _sum_fils(
+        conn,
+        """SELECT COALESCE(SUM(invoice_payments.amount_fils), 0)
+           FROM invoice_payments
+           JOIN invoices ON invoices.id = invoice_payments.invoice_id
+           WHERE invoices.status != 'voided' AND invoices.is_credit = 1
+             AND date(invoice_payments.paid_at) BETWEEN date(?) AND date(?)""",
         start_date,
         end_date,
     )
@@ -95,7 +111,16 @@ def period_financial_summary(conn: sqlite3.Connection, start_date: str, end_date
     purchase_fils = _sum_fils(
         conn,
         """SELECT COALESCE(SUM(total_amount_fils), 0) FROM purchase_invoices
-           WHERE voided_at IS NULL AND date(purchase_date) BETWEEN date(?) AND date(?)""",
+           WHERE voided_at IS NULL AND is_credit = 0
+             AND date(purchase_date) BETWEEN date(?) AND date(?)""",
+        start_date,
+        end_date,
+    )
+    purchase_fils += _sum_fils(
+        conn,
+        """SELECT COALESCE(SUM(total_amount_fils), 0) FROM purchase_invoices
+           WHERE voided_at IS NULL AND is_credit = 1 AND paid_at IS NOT NULL
+             AND date(paid_at) BETWEEN date(?) AND date(?)""",
         start_date,
         end_date,
     )
@@ -122,7 +147,8 @@ def period_transaction_ledger(conn: sqlite3.Connection, start_date: str, end_dat
     for row in conn.execute(
         """SELECT invoice_no, customer_name, grand_total_fils, created_at
            FROM invoices
-           WHERE status != 'voided' AND date(created_at) BETWEEN date(?) AND date(?)""",
+           WHERE status != 'voided' AND is_credit = 0
+             AND date(created_at) BETWEEN date(?) AND date(?)""",
         (start_date, end_date),
     ).fetchall():
         records.append(
@@ -136,10 +162,13 @@ def period_transaction_ledger(conn: sqlite3.Connection, start_date: str, end_dat
         )
 
     for row in conn.execute(
-        """SELECT invoices.invoice_no, invoice_payments.amount_fils, invoice_payments.paid_at
+        """SELECT invoices.invoice_no, invoices.is_credit,
+                  invoice_payments.payment_type, invoice_payments.amount_fils,
+                  invoice_payments.paid_at
            FROM invoice_payments
            JOIN invoices ON invoices.id = invoice_payments.invoice_id
-           WHERE invoice_payments.payment_type = 'remaining'
+           WHERE invoices.status != 'voided'
+             AND (invoice_payments.payment_type = 'remaining' OR invoices.is_credit = 1)
              AND date(invoice_payments.paid_at) BETWEEN date(?) AND date(?)""",
         (start_date, end_date),
     ).fetchall():
@@ -147,7 +176,7 @@ def period_transaction_ledger(conn: sqlite3.Connection, start_date: str, end_dat
             {
                 "kind": "remaining_payment",
                 "reference": row["invoice_no"],
-                "description": "سداد متبقي",
+                "description": "سداد فاتورة آجلة" if row["is_credit"] else "سداد متبقي",
                 "amount_fils": row["amount_fils"],
                 "txn_date": row["paid_at"],
             }
@@ -194,7 +223,8 @@ def period_transaction_ledger(conn: sqlite3.Connection, start_date: str, end_dat
     for row in conn.execute(
         """SELECT voucher_no, supplier_name, total_amount_fils, purchase_date
            FROM purchase_invoices
-           WHERE voided_at IS NULL AND date(purchase_date) BETWEEN date(?) AND date(?)""",
+           WHERE voided_at IS NULL AND is_credit = 0
+             AND date(purchase_date) BETWEEN date(?) AND date(?)""",
         (start_date, end_date),
     ).fetchall():
         records.append(
@@ -204,6 +234,25 @@ def period_transaction_ledger(conn: sqlite3.Connection, start_date: str, end_dat
                 "description": row["supplier_name"],
                 "amount_fils": row["total_amount_fils"],
                 "txn_date": row["purchase_date"],
+            }
+        )
+
+    # Credit purchases enter the ledger on the day they were settled, not
+    # the day they were recorded.
+    for row in conn.execute(
+        """SELECT voucher_no, supplier_name, total_amount_fils, paid_at
+           FROM purchase_invoices
+           WHERE voided_at IS NULL AND is_credit = 1 AND paid_at IS NOT NULL
+             AND date(paid_at) BETWEEN date(?) AND date(?)""",
+        (start_date, end_date),
+    ).fetchall():
+        records.append(
+            {
+                "kind": "purchase",
+                "reference": row["voucher_no"],
+                "description": f"{row['supplier_name']} (تسديد فاتورة آجلة)",
+                "amount_fils": row["total_amount_fils"],
+                "txn_date": row["paid_at"],
             }
         )
 

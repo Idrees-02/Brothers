@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -61,8 +62,8 @@ class AttendanceScreen(QWidget):
         date_row.addStretch()
         layout.addLayout(date_row)
 
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["الموظف", "الحالة", ""])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["الموظف", "الحالة", "ملاحظات", ""])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
 
@@ -92,6 +93,12 @@ class AttendanceScreen(QWidget):
                 combo.setCurrentText(_STATUS_LABELS[existing["status"]])
             self.table.setCellWidget(i, 1, combo)
 
+            note_input = QLineEdit()
+            note_input.setPlaceholderText("ملاحظة (اختياري)")
+            if existing and existing["note"]:
+                note_input.setText(existing["note"])
+            self.table.setCellWidget(i, 2, note_input)
+
             print_button = QPushButton()
             if _PRINTER_ICON_PATH.exists():
                 print_button.setIcon(QIcon(str(_PRINTER_ICON_PATH)))
@@ -103,7 +110,7 @@ class AttendanceScreen(QWidget):
                     self._open_print_dialog(emp_id, emp_name)
                 )
             )
-            self.table.setCellWidget(i, 2, print_button)
+            self.table.setCellWidget(i, 3, print_button)
 
         # Row height computed from the plain employee-name text item is too
         # short for the padded QComboBox next to it, clipping its content.
@@ -118,6 +125,7 @@ class AttendanceScreen(QWidget):
         try:
             for i, employee_id in enumerate(self._employee_ids):
                 combo: QComboBox = self.table.cellWidget(i, 1)
+                note_input: QLineEdit = self.table.cellWidget(i, 2)
                 status = _LABEL_TO_STATUS[combo.currentText()]
                 employee_service.register_attendance(
                     self._conn,
@@ -128,6 +136,7 @@ class AttendanceScreen(QWidget):
                     override_password_prompt=lambda: prompt_override_password(
                         "تسجيل الحضور والانصراف", self
                     ),
+                    note=note_input.text().strip() or None,
                 )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "تعذر الحفظ", str(exc))

@@ -30,6 +30,18 @@ def _validate_payment_method(payment_method: str) -> None:
         raise ValueError("طريقة الدفع مطلوبة")
 
 
+def _validate_discount(discount_fils: int, subtotal_fils: int) -> None:
+    if discount_fils < 0:
+        raise ValueError("التخفيض لا يمكن أن يكون سالباً")
+    if discount_fils > subtotal_fils:
+        raise ValueError("التخفيض لا يمكن أن يتجاوز إجمالي الأصناف")
+
+
+def _validate_credit(is_credit: bool, account_id: int | None) -> None:
+    if is_credit and account_id is None:
+        raise ValueError("يجب اختيار الحساب للفاتورة الآجلة")
+
+
 def create_cash_invoice(
     conn: sqlite3.Connection,
     user: sqlite3.Row,
@@ -44,16 +56,24 @@ def create_cash_invoice(
     address: str | None = None,
     deposit_fils: int = 0,
     delivery_date: str | None = None,
+    discount_fils: int = 0,
+    tax_rate_percent: float | None = None,
+    account_id: int | None = None,
+    is_credit: bool = False,
 ) -> int:
-    """A plain cash invoice is paid in full immediately (no deposit concept).
-    with_delivery=True adds a delivery leg on top: it goes through the exact
-    same installation-schedule/outcome workflow as an installation invoice
-    (see invoices_repo.list_installations_for_date), can carry a deposit
-    (with the remainder due on delivery, mirroring
-    create_installation_invoice's booked/completed split), and needs a
-    region. The delivery fee itself isn't handled here - the caller (the
-    invoice form) adds it as a normal, user-editable line item before
-    calling this, exactly like any other item.
+    """A plain cash invoice with deposit_fils=0 is paid in full immediately;
+    a positive deposit below the total records a partial payment and leaves
+    the invoice 'booked' until the remainder is collected. with_delivery=True
+    adds a delivery leg on top: it goes through the exact same
+    installation-schedule/outcome workflow as an installation invoice
+    (see invoices_repo.list_installations_for_date) and needs a region. The
+    delivery fee itself isn't handled here - the caller (the invoice form)
+    adds it as a normal, user-editable line item before calling this,
+    exactly like any other item. is_credit=True (فاتورة آجلة) requires an
+    account, records no automatic full payment, and keeps the invoice out of
+    the financial report until money is actually collected.
+    tax_rate_percent=None snapshots the current Settings rate; passing a
+    value lets a single invoice carry its own rate.
     """
     require_permission(
         conn, user, Permission.CREATE_INVOICE, "إنشاء فاتورة قطع جاهزة", override_password_prompt
@@ -63,20 +83,24 @@ def create_cash_invoice(
     if not items:
         raise ValueError("يجب إضافة صنف واحد على الأقل")
     _validate_payment_method(payment_method)
+    _validate_credit(is_credit, account_id)
     if with_delivery and not area_region:
         raise ValueError("المنطقة مطلوبة للتوصيل")
 
     settings = settings_repo.get_settings(conn)
-    subtotal_fils = sum_line_items_fils(items)
-    tax = compute_tax(subtotal_fils, settings["tax_rate_percent"], tax_included)
+    items_subtotal_fils = sum_line_items_fils(items)
+    _validate_discount(discount_fils, items_subtotal_fils)
+    rate = settings["tax_rate_percent"] if tax_rate_percent is None else tax_rate_percent
+    tax = compute_tax(items_subtotal_fils - discount_fils, rate, tax_included)
     invoice_no = settings_repo.reserve_next_number(conn, "invoice", "cash")
 
-    deposit_fils = deposit_fils if with_delivery else 0
-    if with_delivery:
-        remaining_balance_fils(tax.grand_total_fils, deposit_fils)  # raises if deposit invalid
+    remaining_balance_fils(tax.grand_total_fils, deposit_fils)  # raises if deposit invalid
+    if is_credit:
+        status = "completed" if deposit_fils >= tax.grand_total_fils else "booked"
+    elif with_delivery or deposit_fils > 0:
         status = "completed" if deposit_fils >= tax.grand_total_fils else "booked"
     else:
-        status = "completed"
+        status = "completed"  # no deposit entered - paid in full on the spot
 
     try:
         invoice_id = invoices_repo.insert_invoice(
@@ -91,12 +115,15 @@ def create_cash_invoice(
             with_installation=None,
             with_delivery=int(with_delivery),
             subtotal_fils=tax.subtotal_fils,
+            discount_fils=discount_fils,
             tax_included=int(tax_included),
             tax_rate_percent=tax.tax_rate_percent,
             tax_amount_fils=tax.tax_amount_fils,
             grand_total_fils=tax.grand_total_fils,
             deposit_fils=deposit_fils,
             payment_method=payment_method,
+            account_id=account_id,
+            is_credit=int(is_credit),
             installation_date=delivery_date if with_delivery else None,
             installation_status="pending" if with_delivery else None,
             created_by_user_id=user["id"],
@@ -111,11 +138,10 @@ def create_cash_invoice(
                 unit_price_fils=item["unit_price_fils"],
                 line_total_fils=line_total_fils(item["quantity"], item["unit_price_fils"]),
             )
-        if with_delivery:
-            if deposit_fils > 0:
-                payment_type = "full" if status == "completed" else "deposit"
-                invoices_repo.insert_invoice_payment(conn, invoice_id, payment_type, deposit_fils, user["id"])
-        else:
+        if deposit_fils > 0:
+            payment_type = "full" if status == "completed" else "deposit"
+            invoices_repo.insert_invoice_payment(conn, invoice_id, payment_type, deposit_fils, user["id"])
+        elif not is_credit and not with_delivery:
             invoices_repo.insert_invoice_payment(
                 conn, invoice_id, "full", tax.grand_total_fils, user["id"]
             )
@@ -143,6 +169,10 @@ def create_installation_invoice(
     override_password_prompt: OverridePrompt,
     address: str | None = None,
     installation_date: str | None = None,
+    discount_fils: int = 0,
+    tax_rate_percent: float | None = None,
+    account_id: int | None = None,
+    is_credit: bool = False,
 ) -> int:
     require_permission(
         conn, user, Permission.CREATE_INVOICE, "إنشاء فاتورة تركيب وتفصيل", override_password_prompt
@@ -156,6 +186,7 @@ def create_installation_invoice(
     if not items:
         raise ValueError("يجب إضافة صنف واحد على الأقل")
     _validate_payment_method(payment_method)
+    _validate_credit(is_credit, account_id)
 
     settings = settings_repo.get_settings(conn)
     line_items = list(items)
@@ -169,8 +200,10 @@ def create_installation_invoice(
             }
         )
 
-    subtotal_fils = sum_line_items_fils(line_items)
-    tax = compute_tax(subtotal_fils, settings["tax_rate_percent"], tax_included)
+    items_subtotal_fils = sum_line_items_fils(line_items)
+    _validate_discount(discount_fils, items_subtotal_fils)
+    rate = settings["tax_rate_percent"] if tax_rate_percent is None else tax_rate_percent
+    tax = compute_tax(items_subtotal_fils - discount_fils, rate, tax_included)
     remaining_balance_fils(tax.grand_total_fils, deposit_fils)  # raises if deposit invalid
     status = "completed" if deposit_fils >= tax.grand_total_fils else "booked"
     invoice_no = settings_repo.reserve_next_number(conn, "invoice", "installation")
@@ -187,12 +220,15 @@ def create_installation_invoice(
             status=status,
             with_installation=int(with_installation),
             subtotal_fils=tax.subtotal_fils,
+            discount_fils=discount_fils,
             tax_included=int(tax_included),
             tax_rate_percent=tax.tax_rate_percent,
             tax_amount_fils=tax.tax_amount_fils,
             grand_total_fils=tax.grand_total_fils,
             deposit_fils=deposit_fils,
             payment_method=payment_method,
+            account_id=account_id,
+            is_credit=int(is_credit),
             installation_date=installation_date,
             installation_status="pending",
             created_by_user_id=user["id"],
@@ -232,11 +268,16 @@ def update_invoice(
     address: str | None = None,
     area_region: str | None = None,
     payment_method: str | None = None,
+    discount_fils: int | None = None,
+    tax_rate_percent: float | None = None,
+    account_id: int | None = None,
+    is_credit: bool | None = None,
 ) -> dict:
     """Edits an existing invoice's customer info and line items. The tax
-    rate stays whatever was snapshotted at creation time - editing never
-    changes which rate applied. Deposits/payments already recorded are left
-    untouched, but the new total can never drop below what's already paid.
+    rate stays whatever was snapshotted at creation time unless the caller
+    explicitly passes a new tax_rate_percent (the per-invoice rate field on
+    the form). Deposits/payments already recorded are left untouched, but
+    the new total can never drop below what's already paid.
     """
     require_permission(conn, user, Permission.EDIT_INVOICE, "تعديل فاتورة", override_password_prompt)
     invoice = invoices_repo.get_invoice(conn, invoice_id)
@@ -255,8 +296,14 @@ def update_invoice(
     if payment_method is not None:
         _validate_payment_method(payment_method)
 
-    subtotal_fils = sum_line_items_fils(items)
-    tax = compute_tax(subtotal_fils, header["tax_rate_percent"], tax_included)
+    discount = header["discount_fils"] if discount_fils is None else discount_fils
+    credit = bool(header["is_credit"]) if is_credit is None else is_credit
+    account = header["account_id"] if account_id is None else account_id
+    _validate_credit(credit, account)
+    items_subtotal_fils = sum_line_items_fils(items)
+    _validate_discount(discount, items_subtotal_fils)
+    rate = header["tax_rate_percent"] if tax_rate_percent is None else tax_rate_percent
+    tax = compute_tax(items_subtotal_fils - discount, rate, tax_included)
 
     paid_so_far = sum(p["amount_fils"] for p in invoice["payments"])
     if tax.grand_total_fils < paid_so_far:
@@ -271,10 +318,14 @@ def update_invoice(
             address=address,
             area_region=area_region,
             subtotal_fils=tax.subtotal_fils,
+            discount_fils=discount,
             tax_included=int(tax_included),
+            tax_rate_percent=tax.tax_rate_percent,
             tax_amount_fils=tax.tax_amount_fils,
             grand_total_fils=tax.grand_total_fils,
             payment_method=payment_method or header["payment_method"],
+            account_id=account,
+            is_credit=int(credit),
         )
         invoices_repo.delete_invoice_items(conn, invoice_id)
         for item in items:

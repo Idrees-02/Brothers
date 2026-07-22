@@ -145,16 +145,27 @@ def create_purchase_invoice(
     override_password_prompt: OverridePrompt,
     tax_included: bool = False,
     note: str | None = None,
+    tax_rate_percent: float | None = None,
+    account_id: int | None = None,
+    is_credit: bool = False,
 ) -> int:
+    """is_credit=True (فاتورة شراء آجلة) requires an account and keeps the
+    purchase out of the financial report until settle_purchase_invoice marks
+    it paid. tax_rate_percent=None snapshots the current Settings rate."""
     require_permission(conn, user, Permission.CREATE_VOUCHER, "إنشاء فاتورة شراء", override_password_prompt)
     if not supplier_name:
         raise ValueError("اسم المورد مطلوب")
     if not items:
         raise ValueError("يجب إضافة صنف واحد على الأقل")
+    if is_credit and account_id is None:
+        raise ValueError("يجب اختيار الحساب للفاتورة الآجلة")
+    if account_id is not None:
+        _validate_account(conn, account_id)
 
     settings = settings_repo.get_settings(conn)
     subtotal_fils = sum_line_items_fils(items)
-    tax = compute_tax(subtotal_fils, settings["tax_rate_percent"], tax_included)
+    rate = settings["tax_rate_percent"] if tax_rate_percent is None else tax_rate_percent
+    tax = compute_tax(subtotal_fils, rate, tax_included)
     voucher_no = settings_repo.reserve_next_number(conn, "voucher", "purchase")
 
     try:
@@ -169,6 +180,8 @@ def create_purchase_invoice(
             tax_amount_fils=tax.tax_amount_fils,
             purchase_date=purchase_date,
             note=note,
+            account_id=account_id,
+            is_credit=int(is_credit),
             created_by_user_id=user["id"],
         )
         for item in items:
@@ -185,3 +198,23 @@ def create_purchase_invoice(
         conn.rollback()
         raise
     return purchase_id
+
+
+def settle_purchase_invoice(
+    conn: sqlite3.Connection,
+    user: sqlite3.Row,
+    purchase_invoice_id: int,
+    override_password_prompt: OverridePrompt,
+) -> None:
+    """Marks a credit purchase invoice (فاتورة شراء آجلة) as paid - from
+    this moment it starts counting in the financial report."""
+    require_permission(conn, user, Permission.CREATE_VOUCHER, "تسديد فاتورة شراء آجلة", override_password_prompt)
+    purchase = vouchers_repo.get_purchase_invoice(conn, purchase_invoice_id)
+    if purchase is None:
+        raise ValueError("فاتورة الشراء غير موجودة")
+    header = purchase["header"]
+    if not header["is_credit"]:
+        raise ValueError("هذه الفاتورة نقدية وليست آجلة")
+    if header["paid_at"] is not None:
+        raise ValueError("تم تسديد هذه الفاتورة بالفعل")
+    vouchers_repo.settle_purchase_invoice(conn, purchase_invoice_id)

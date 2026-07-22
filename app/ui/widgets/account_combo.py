@@ -9,14 +9,19 @@ from app.repositories import accounts_repo
 
 
 class AccountCombo(QComboBox):
-    def __init__(self, conn: sqlite3.Connection, parent=None):
+    def __init__(self, conn: sqlite3.Connection, parent=None, allow_empty: bool = False):
+        """allow_empty=True prepends a "بدون حساب" entry (data None) - for
+        forms where picking an account is optional (e.g. cash invoices)."""
         super().__init__(parent)
         self._conn = conn
+        self._allow_empty = allow_empty
         self.refresh()
 
     def refresh(self) -> None:
         current = self.selected_account_id()
         self.clear()
+        if self._allow_empty:
+            self.addItem("-- بدون حساب --", None)
         for account in accounts_repo.list_accounts(self._conn):
             self.addItem(account["name"], account["id"])
         if current is not None:
@@ -25,7 +30,7 @@ class AccountCombo(QComboBox):
     def selected_account_id(self) -> int | None:
         return self.currentData()
 
-    def set_account(self, account_id: int) -> None:
+    def set_account(self, account_id: int | None) -> None:
         index = self.findData(account_id)
         if index >= 0:
             self.setCurrentIndex(index)

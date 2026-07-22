@@ -50,6 +50,7 @@ def build_invoice_html(invoice: dict, shop_name_ar: str) -> str:
         {rows}
     </table>
     <p>
+        {"التخفيض: " + fils_to_bhd_str(header['discount_fils']) + " د.ب<br>" if header['discount_fils'] else ""}
         المجموع الفرعي: {fils_to_bhd_str(header['subtotal_fils'])} د.ب<br>
         الضريبة ({header['tax_rate_percent']}%){' (شاملة)' if header['tax_included'] else ''}:
             {fils_to_bhd_str(header['tax_amount_fils'])} د.ب<br>

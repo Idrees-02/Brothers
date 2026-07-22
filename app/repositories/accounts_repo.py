@@ -4,10 +4,33 @@
 import sqlite3
 
 
-def create_account(conn: sqlite3.Connection, name: str) -> int:
-    cur = conn.execute("INSERT INTO accounts (name) VALUES (?)", (name,))
+DEFAULT_ACCOUNT_TYPES = ["مورد", "مالك", "عميل", "مشتريات نقدا", "مبيعات كاش"]
+
+
+def create_account(conn: sqlite3.Connection, name: str, account_type: str | None = None) -> int:
+    cur = conn.execute(
+        "INSERT INTO accounts (name, account_type) VALUES (?, ?)", (name, account_type)
+    )
     conn.commit()
     return cur.lastrowid
+
+
+def set_account_type(conn: sqlite3.Connection, account_id: int, account_type: str | None) -> None:
+    conn.execute("UPDATE accounts SET account_type = ? WHERE id = ?", (account_type, account_id))
+    conn.commit()
+
+
+def list_account_types(conn: sqlite3.Connection) -> list[str]:
+    """The default types plus every distinct type already used, so the type
+    dropdown offers the user's own additions on the next account too."""
+    rows = conn.execute(
+        "SELECT DISTINCT account_type FROM accounts WHERE account_type IS NOT NULL AND account_type != ''"
+    ).fetchall()
+    types = list(DEFAULT_ACCOUNT_TYPES)
+    for row in rows:
+        if row["account_type"] not in types:
+            types.append(row["account_type"])
+    return types
 
 
 def list_accounts(conn: sqlite3.Connection, include_inactive: bool = False) -> list[sqlite3.Row]:

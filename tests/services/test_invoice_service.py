@@ -101,13 +101,36 @@ def test_create_cash_invoice_without_delivery_ignores_delivery_fields(conn):
         payment_method="cash",
         override_password_prompt=lambda: None,
         area_region="يجب أن يُتجاهل",  # with_delivery=False - these must not persist
-        deposit_fils=5_000,
     )
     header = invoices_repo.get_invoice(conn, invoice_id)["header"]
     assert header["with_delivery"] == 0
     assert header["area_region"] is None
     assert header["deposit_fils"] == 0
     assert header["status"] == "completed"
+
+
+def test_create_cash_invoice_partial_deposit_without_delivery_stays_booked(conn):
+    """A deposit can now be recorded on a plain cash invoice (no delivery) -
+    the invoice stays booked with the deposit as its only payment until the
+    remainder is collected."""
+    admin = get_admin(conn)
+    invoice_id = invoice_service.create_cash_invoice(
+        conn,
+        admin,
+        phone="33330000",
+        items=[{"description": "سجادة", "quantity": 1, "unit_price_fils": 10_000}],
+        tax_included=False,
+        payment_method="cash",
+        override_password_prompt=lambda: None,
+        deposit_fils=5_000,
+    )
+    invoice = invoices_repo.get_invoice(conn, invoice_id)
+    header = invoice["header"]
+    assert header["with_delivery"] == 0
+    assert header["deposit_fils"] == 5_000
+    assert header["status"] == "booked"
+    assert [p["payment_type"] for p in invoice["payments"]] == ["deposit"]
+    assert sum(p["amount_fils"] for p in invoice["payments"]) == 5_000
 
 
 def test_create_installation_invoice_with_deposit_stays_booked(conn):

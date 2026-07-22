@@ -6,7 +6,9 @@ from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDateEdit,
+    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
 from app.domain.money import fils_to_bhd_str
 from app.repositories import settings_repo, vouchers_repo
 from app.services import voucher_service
+from app.ui.widgets.account_combo import AccountCombo
 from app.ui.widgets.card import Card, scrollable
 from app.ui.widgets.line_items_table import LineItemsTable
 from app.ui.widgets.override_dialog import prompt_override_password
@@ -56,6 +59,22 @@ class PurchaseInvoiceFormScreen(QWidget):
         self.note_input = QLineEdit()
         form.addRow("ملاحظات", self.note_input)
 
+        self.account_combo = AccountCombo(conn, allow_empty=True)
+        form.addRow("الحساب", self.account_combo)
+
+        self.invoice_kind_combo = QComboBox()
+        self.invoice_kind_combo.addItem("نقدا", False)
+        self.invoice_kind_combo.addItem("آجل", True)
+        form.addRow("نوع الفاتورة", self.invoice_kind_combo)
+
+        self.tax_rate_input = QDoubleSpinBox()
+        self.tax_rate_input.setDecimals(2)
+        self.tax_rate_input.setRange(0.0, 100.0)
+        self.tax_rate_input.setSuffix(" %")
+        self.tax_rate_input.setValue(settings_repo.get_settings(conn)["tax_rate_percent"])
+        self.tax_rate_input.valueChanged.connect(lambda value: self.items_table.set_tax_rate(value))
+        form.addRow("نسبة الضريبة", self.tax_rate_input)
+
         self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
         self.tax_included_checkbox.stateChanged.connect(
             lambda: self.items_table.set_tax_included(self.tax_included_checkbox.isChecked())
@@ -65,6 +84,7 @@ class PurchaseInvoiceFormScreen(QWidget):
 
         self.items_table = LineItemsTable(quantity_label="الكمية", conn=conn)
         self.items_table.set_tax_rate(settings_repo.get_settings(conn)["tax_rate_percent"])
+        self.tax_included_checkbox.setChecked(True)  # default: totals entered tax-inclusive
         self.items_table.add_row()
         layout.addWidget(self.items_table)
 
@@ -72,18 +92,23 @@ class PurchaseInvoiceFormScreen(QWidget):
         save_button = QPushButton("حفظ فاتورة الشراء")
         save_button.clicked.connect(self._save)
         buttons_row.addWidget(save_button)
+        self.settle_button = QPushButton("تسديد الفاتورة المحددة")
+        self.settle_button.setObjectName("secondaryButton")
+        self.settle_button.clicked.connect(self._settle_selected)
+        buttons_row.addWidget(self.settle_button)
         buttons_row.addStretch()
         layout.addLayout(buttons_row)
 
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["رقم السند", "المورد", "الضريبة", "الإجمالي شامل الضريبة", "التاريخ"]
+            ["رقم السند", "المورد", "الضريبة", "الإجمالي شامل الضريبة", "النوع", "الحالة", "التاريخ"]
         )
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self.table)
 
+        self._rows: list[sqlite3.Row] = []
         self._refresh_table()
 
     def _save(self) -> None:
@@ -102,23 +127,56 @@ class PurchaseInvoiceFormScreen(QWidget):
                 # the entry-mode checkbox, so tax must be added on top.
                 tax_included=False,
                 note=self.note_input.text().strip() or None,
+                tax_rate_percent=self.tax_rate_input.value(),
+                account_id=self.account_combo.selected_account_id(),
+                is_credit=bool(self.invoice_kind_combo.currentData()),
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "تعذر الحفظ", str(exc))
             return
         self.supplier_input.clear()
         self.note_input.clear()
-        self.tax_included_checkbox.setChecked(False)
+        self.tax_included_checkbox.setChecked(True)
+        self.tax_rate_input.setValue(settings_repo.get_settings(self._conn)["tax_rate_percent"])
+        self.invoice_kind_combo.setCurrentIndex(0)
+        self.account_combo.refresh()
+        self.account_combo.setCurrentIndex(0)
         self.items_table.clear_rows()
         self.items_table.add_row()
         self._refresh_table()
 
+    def _settle_selected(self) -> None:
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._rows):
+            QMessageBox.information(self, "تنبيه", "الرجاء تحديد فاتورة من الجدول أولاً")
+            return
+        try:
+            voucher_service.settle_purchase_invoice(
+                self._conn,
+                self._user,
+                self._rows[row]["id"],
+                override_password_prompt=lambda: prompt_override_password(
+                    "تسديد فاتورة شراء آجلة", self
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "تعذر التسديد", str(exc))
+            return
+        QMessageBox.information(self, "تم", "تم تسديد الفاتورة - ستظهر الآن في التقرير المالي")
+        self._refresh_table()
+
     def _refresh_table(self) -> None:
-        rows = vouchers_repo.list_purchase_invoices(self._conn)
-        self.table.setRowCount(len(rows))
-        for i, row in enumerate(rows):
+        self._rows = vouchers_repo.list_purchase_invoices(self._conn)
+        self.table.setRowCount(len(self._rows))
+        for i, row in enumerate(self._rows):
+            if row["is_credit"]:
+                status = "مسددة" if row["paid_at"] else "غير مسددة"
+            else:
+                status = "مدفوعة"
             self.table.setItem(i, 0, QTableWidgetItem(row["voucher_no"]))
             self.table.setItem(i, 1, QTableWidgetItem(row["supplier_name"]))
             self.table.setItem(i, 2, QTableWidgetItem(fils_to_bhd_str(row["tax_amount_fils"])))
             self.table.setItem(i, 3, QTableWidgetItem(fils_to_bhd_str(row["total_amount_fils"])))
-            self.table.setItem(i, 4, QTableWidgetItem(row["purchase_date"]))
+            self.table.setItem(i, 4, QTableWidgetItem("آجل" if row["is_credit"] else "نقدا"))
+            self.table.setItem(i, 5, QTableWidgetItem(status))
+            self.table.setItem(i, 6, QTableWidgetItem(row["purchase_date"]))
