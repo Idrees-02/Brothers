@@ -39,3 +39,13 @@ def test_count_attendance_status_over_range(conn, admin_user_id):
     )
     assert absent_count == 2
     assert late_count == 1
+
+
+def test_count_present_on_date(conn, admin_user_id):
+    today = date.today().isoformat()
+    e1 = employees_repo.create_employee(conn, "خالد", 300_000)
+    e2 = employees_repo.create_employee(conn, "سالم", 300_000)
+    employees_repo.upsert_attendance(conn, e1, today, "present", admin_user_id)
+    employees_repo.upsert_attendance(conn, e2, today, "absent", admin_user_id)
+
+    assert employees_repo.count_present_on_date(conn, today) == 1

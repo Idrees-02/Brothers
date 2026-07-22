@@ -3,6 +3,7 @@
 import sqlite3
 
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from app.domain.money import fils_to_bhd_str
 from app.services import employee_service
+from app.ui.widgets.card import Card
 from app.ui.widgets.date_range_picker import DateRangePicker
 
 
@@ -24,8 +26,15 @@ class SalaryReportScreen(QWidget):
         self._conn = conn
         self._user = user
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("تقرير الرواتب الشهري"))
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        card = Card()
+        outer_layout.addWidget(card)
+        layout = card.body_layout
+
+        subtitle = QLabel("تقرير الرواتب الشهري لكل الموظفين")
+        subtitle.setObjectName("sectionSubtitle")
+        layout.addWidget(subtitle)
 
         controls_row = QHBoxLayout()
         self.date_range = DateRangePicker()
@@ -42,6 +51,7 @@ class SalaryReportScreen(QWidget):
         )
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self.table)
 
     def _generate(self) -> None:

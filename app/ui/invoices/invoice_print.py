@@ -10,6 +10,7 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import QWidget
 
 from app.domain.money import fils_to_bhd_str
+from app.services.invoice_service import PAYMENT_METHOD_LABELS_AR
 
 _TYPE_LABEL = {"cash": "فاتورة قطع جاهزة", "installation": "فاتورة تركيب وتفصيل"}
 
@@ -42,6 +43,7 @@ def build_invoice_html(invoice: dict, shop_name_ar: str) -> str:
     <p>الزبون: {escape(header['customer_name'] or '')}<br>
        الهاتف: {escape(header['phone'])}<br>
        {"المنطقة: " + escape(header['area_region']) + "<br>" if header['area_region'] else ""}
+       طريقة الدفع: {PAYMENT_METHOD_LABELS_AR.get(header['payment_method'], '')}<br>
        التاريخ: {header['created_at']}</p>
     <table border="1" cellspacing="0" cellpadding="4" width="100%">
         <tr><th>الوصف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr>

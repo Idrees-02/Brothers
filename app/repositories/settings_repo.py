@@ -4,17 +4,26 @@ invoice/voucher number counters it holds."""
 import sqlite3
 
 _COUNTER_COLUMN = {
-    ("invoice", "cash"): "next_cash_invoice_no",
-    ("invoice", "installation"): "next_installation_invoice_no",
+    # Both invoice types share one plain sequence (no letters) - see
+    # SCHEMA_V8_SQL: a cash invoice and an installation invoice created back
+    # to back get consecutive numbers (e.g. 1, then 2) regardless of type.
+    ("invoice", "cash"): "next_invoice_no",
+    ("invoice", "installation"): "next_invoice_no",
     ("voucher", "expense"): "next_expense_voucher_no",
     ("voucher", "purchase"): "next_purchase_voucher_no",
+    ("voucher", "receipt"): "next_receipt_voucher_no",
+    ("voucher", "stock_in"): "next_stock_in_voucher_no",
+    ("voucher", "stock_out"): "next_stock_out_voucher_no",
 }
 
 _PREFIX = {
-    ("invoice", "cash"): "CASH",
-    ("invoice", "installation"): "INST",
+    ("invoice", "cash"): "",
+    ("invoice", "installation"): "",
     ("voucher", "expense"): "EXP",
     ("voucher", "purchase"): "PUR",
+    ("voucher", "receipt"): "REC",
+    ("voucher", "stock_in"): "STIN",
+    ("voucher", "stock_out"): "STOUT",
 }
 
 
@@ -59,9 +68,11 @@ def update_override_password(conn: sqlite3.Connection, password_hash: str) -> No
 
 def reserve_next_number(conn: sqlite3.Connection, kind: str, subtype: str) -> str:
     """Atomically increments and returns a formatted sequential number, e.g.
-    reserve_next_number(conn, "invoice", "cash") -> "CASH-000123".
+    reserve_next_number(conn, "voucher", "expense") -> "EXP-000123". Invoices
+    have no prefix (kind/subtype pairs mapping to an empty _PREFIX entry) -
+    reserve_next_number(conn, "invoice", "cash") -> "1", "2", "3", ...
     kind is "invoice" or "voucher"; subtype is "cash"/"installation" or
-    "expense"/"purchase" respectively.
+    "expense"/"purchase"/etc. respectively.
     """
     column = _COUNTER_COLUMN[(kind, subtype)]
     prefix = _PREFIX[(kind, subtype)]
@@ -69,4 +80,6 @@ def reserve_next_number(conn: sqlite3.Connection, kind: str, subtype: str) -> st
     current = row[0]
     conn.execute(f"UPDATE settings SET {column} = ? WHERE id = 1", (current + 1,))
     conn.commit()
+    if not prefix:
+        return str(current)
     return f"{prefix}-{current:06d}"

@@ -4,7 +4,8 @@ check-in workflow)."""
 
 import sqlite3
 
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
@@ -19,9 +20,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.config import resources_dir
 from app.repositories import employees_repo
 from app.services import employee_service
+from app.ui.employees.attendance_print_dialog import AttendancePrintDialog
+from app.ui.widgets.card import Card
 from app.ui.widgets.override_dialog import prompt_override_password
+
+_PRINTER_ICON_PATH = resources_dir() / "icons" / "navy" / "printer.svg"
 
 _STATUS_OPTIONS = [("present", "حضور"), ("absent", "غياب"), ("late", "تأخير")]
 _STATUS_LABELS = {key: label for key, label in _STATUS_OPTIONS}
@@ -35,8 +41,15 @@ class AttendanceScreen(QWidget):
         self._user = user
         self._employee_ids: list[int] = []
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("تسجيل الحضور والانصراف اليومي"))
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        card = Card()
+        outer_layout.addWidget(card)
+        layout = card.body_layout
+
+        subtitle = QLabel("تسجيل الحضور والانصراف اليومي لكل موظف")
+        subtitle.setObjectName("sectionSubtitle")
+        layout.addWidget(subtitle)
 
         date_row = QHBoxLayout()
         date_row.addWidget(QLabel("التاريخ:"))
@@ -48,8 +61,8 @@ class AttendanceScreen(QWidget):
         date_row.addStretch()
         layout.addLayout(date_row)
 
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["الموظف", "الحالة"])
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["الموظف", "الحالة", ""])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
 
@@ -57,6 +70,11 @@ class AttendanceScreen(QWidget):
         save_button.clicked.connect(self._save)
         layout.addWidget(save_button)
 
+        self._load_day()
+
+    def show_for_date(self, target_date: QDate) -> None:
+        """Entry point for the dashboard's "employees present today" stat card."""
+        self.date_input.setDate(target_date)
         self._load_day()
 
     def _load_day(self) -> None:
@@ -73,6 +91,27 @@ class AttendanceScreen(QWidget):
             if existing:
                 combo.setCurrentText(_STATUS_LABELS[existing["status"]])
             self.table.setCellWidget(i, 1, combo)
+
+            print_button = QPushButton()
+            if _PRINTER_ICON_PATH.exists():
+                print_button.setIcon(QIcon(str(_PRINTER_ICON_PATH)))
+            print_button.setObjectName("secondaryButton")
+            print_button.setToolTip(f"طباعة سجل حضور {employee['full_name']}")
+            print_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            print_button.clicked.connect(
+                lambda _checked=False, emp_id=employee["id"], emp_name=employee["full_name"]: (
+                    self._open_print_dialog(emp_id, emp_name)
+                )
+            )
+            self.table.setCellWidget(i, 2, print_button)
+
+        # Row height computed from the plain employee-name text item is too
+        # short for the padded QComboBox next to it, clipping its content.
+        self.table.resizeRowsToContents()
+
+    def _open_print_dialog(self, employee_id: int, employee_name: str) -> None:
+        dialog = AttendancePrintDialog(self._conn, employee_id, employee_name, self)
+        dialog.exec()
 
     def _save(self) -> None:
         work_date = self.date_input.date().toString("yyyy-MM-dd")

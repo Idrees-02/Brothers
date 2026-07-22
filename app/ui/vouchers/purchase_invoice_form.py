@@ -4,6 +4,8 @@ import sqlite3
 
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QCheckBox,
     QDateEdit,
     QFormLayout,
     QHBoxLayout,
@@ -21,6 +23,7 @@ from PySide6.QtWidgets import (
 from app.domain.money import fils_to_bhd_str
 from app.repositories import vouchers_repo
 from app.services import voucher_service
+from app.ui.widgets.card import Card, scrollable
 from app.ui.widgets.line_items_table import LineItemsTable
 from app.ui.widgets.override_dialog import prompt_override_password
 
@@ -31,8 +34,15 @@ class PurchaseInvoiceFormScreen(QWidget):
         self._conn = conn
         self._user = user
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("فواتير الشراء (البضائع المشتراة من قبل المحل)"))
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        card = Card()
+        outer_layout.addWidget(scrollable(card))
+        layout = card.body_layout
+
+        subtitle = QLabel("البضائع المشتراة من قبل المحل")
+        subtitle.setObjectName("sectionSubtitle")
+        layout.addWidget(subtitle)
 
         form = QFormLayout()
         self.supplier_input = QLineEdit()
@@ -45,9 +55,12 @@ class PurchaseInvoiceFormScreen(QWidget):
 
         self.note_input = QLineEdit()
         form.addRow("ملاحظات", self.note_input)
+
+        self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
+        form.addRow(self.tax_included_checkbox)
         layout.addLayout(form)
 
-        self.items_table = LineItemsTable(quantity_label="الكمية")
+        self.items_table = LineItemsTable(quantity_label="الكمية", conn=conn)
         layout.addWidget(self.items_table)
 
         buttons_row = QHBoxLayout()
@@ -57,10 +70,13 @@ class PurchaseInvoiceFormScreen(QWidget):
         buttons_row.addStretch()
         layout.addLayout(buttons_row)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["رقم السند", "المورد", "الإجمالي", "التاريخ"])
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(
+            ["رقم السند", "المورد", "الضريبة", "الإجمالي شامل الضريبة", "التاريخ"]
+        )
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self.table)
 
         self._refresh_table()
@@ -77,6 +93,7 @@ class PurchaseInvoiceFormScreen(QWidget):
                 override_password_prompt=lambda: prompt_override_password(
                     "إنشاء فاتورة شراء", self
                 ),
+                tax_included=self.tax_included_checkbox.isChecked(),
                 note=self.note_input.text().strip() or None,
             )
         except Exception as exc:  # noqa: BLE001
@@ -84,6 +101,7 @@ class PurchaseInvoiceFormScreen(QWidget):
             return
         self.supplier_input.clear()
         self.note_input.clear()
+        self.tax_included_checkbox.setChecked(False)
         self.items_table.clear_rows()
         self._refresh_table()
 
@@ -93,5 +111,6 @@ class PurchaseInvoiceFormScreen(QWidget):
         for i, row in enumerate(rows):
             self.table.setItem(i, 0, QTableWidgetItem(row["voucher_no"]))
             self.table.setItem(i, 1, QTableWidgetItem(row["supplier_name"]))
-            self.table.setItem(i, 2, QTableWidgetItem(fils_to_bhd_str(row["total_amount_fils"])))
-            self.table.setItem(i, 3, QTableWidgetItem(row["purchase_date"]))
+            self.table.setItem(i, 2, QTableWidgetItem(fils_to_bhd_str(row["tax_amount_fils"])))
+            self.table.setItem(i, 3, QTableWidgetItem(fils_to_bhd_str(row["total_amount_fils"])))
+            self.table.setItem(i, 4, QTableWidgetItem(row["purchase_date"]))

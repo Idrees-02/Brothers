@@ -4,6 +4,7 @@ password, default fees, working days, shop info."""
 import sqlite3
 
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.repositories import settings_repo, users_repo
+from app.repositories import accounts_repo, settings_repo, users_repo
 from app.services import settings_service
 from app.ui.widgets.money_spinbox import MoneySpinBox
 from app.ui.settings.user_form import UserFormDialog
@@ -34,11 +35,13 @@ class SettingsScreen(QWidget):
         self._user = user
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         tabs = QTabWidget()
         layout.addWidget(tabs)
 
         tabs.addTab(self._build_users_tab(), "المستخدمون")
         tabs.addTab(self._build_financial_tab(), "الإعدادات المالية")
+        tabs.addTab(self._build_accounts_tab(), "الحسابات")
         tabs.addTab(self._build_override_tab(), "كلمة مرور التجاوز")
         tabs.addTab(self._build_shop_tab(), "بيانات المحل")
 
@@ -51,6 +54,7 @@ class SettingsScreen(QWidget):
         self.users_table.setHorizontalHeaderLabels(["اسم المستخدم", "الاسم المعروض", "مدير", "نشط"])
         self.users_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.users_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.users_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.users_table.doubleClicked.connect(self._edit_selected_user)
         layout.addWidget(self.users_table)
 
@@ -176,6 +180,63 @@ class SettingsScreen(QWidget):
             working_days_per_month=self.working_days_input.value(),
         )
         QMessageBox.information(self, "تم", "تم حفظ الإعدادات المالية")
+
+    # ------------------------------------------------------------ accounts
+    def _build_accounts_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.accounts_table = QTableWidget(0, 2)
+        self.accounts_table.setHorizontalHeaderLabels(["اسم الحساب", "نشط"])
+        self.accounts_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.accounts_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.accounts_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        layout.addWidget(self.accounts_table)
+
+        form = QFormLayout()
+        self.new_account_name_input = QLineEdit()
+        form.addRow("اسم الحساب الجديد", self.new_account_name_input)
+        layout.addLayout(form)
+
+        buttons_row = QHBoxLayout()
+        add_button = QPushButton("إضافة حساب")
+        add_button.clicked.connect(self._add_account)
+        buttons_row.addWidget(add_button)
+
+        deactivate_button = QPushButton("إيقاف تفعيل المحدد")
+        deactivate_button.setObjectName("dangerButton")
+        deactivate_button.clicked.connect(self._deactivate_selected_account)
+        buttons_row.addWidget(deactivate_button)
+        buttons_row.addStretch()
+        layout.addLayout(buttons_row)
+
+        self._refresh_accounts_table()
+        return tab
+
+    def _refresh_accounts_table(self) -> None:
+        rows = accounts_repo.list_accounts(self._conn, include_inactive=True)
+        self._account_ids = [row["id"] for row in rows]
+        self.accounts_table.setRowCount(len(rows))
+        for i, row in enumerate(rows):
+            self.accounts_table.setItem(i, 0, QTableWidgetItem(row["name"]))
+            self.accounts_table.setItem(i, 1, QTableWidgetItem("نعم" if row["is_active"] else "لا"))
+
+    def _add_account(self) -> None:
+        name = self.new_account_name_input.text().strip()
+        try:
+            settings_service.create_account(self._conn, self._user, name)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "تعذر الإضافة", str(exc))
+            return
+        self.new_account_name_input.clear()
+        self._refresh_accounts_table()
+
+    def _deactivate_selected_account(self) -> None:
+        row = self.accounts_table.currentRow()
+        if row < 0 or row >= len(self._account_ids):
+            return
+        settings_service.deactivate_account(self._conn, self._user, self._account_ids[row])
+        self._refresh_accounts_table()
 
     # ----------------------------------------------------------- override
     def _build_override_tab(self) -> QWidget:

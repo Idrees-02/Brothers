@@ -1,4 +1,4 @@
-# الإخوة لبيع السجاد - نظام إدارة (Brothers for Selling Carpet)
+# الاخوين لبيع السجاد - نظام إدارة (Brothers for Selling Carpet)
 
 Offline desktop management system for the shop: cash and installation
 invoices, tax handling, expense/purchase vouchers, employee attendance and

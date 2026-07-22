@@ -18,6 +18,23 @@ def test_expense_create_and_void(conn, admin_user_id):
     assert active_after_void == []
 
 
+def test_receipt_create_and_void(conn, admin_user_id):
+    receipt_id = vouchers_repo.insert_receipt(
+        conn,
+        voucher_no="REC-000001",
+        description="دفعة نقدية من زبون",
+        amount_fils=15_000,
+        receipt_date="2026-07-01",
+        created_by_user_id=admin_user_id,
+    )
+    active = vouchers_repo.list_receipts(conn)
+    assert len(active) == 1
+    assert active[0]["id"] == receipt_id
+
+    vouchers_repo.void_receipt(conn, receipt_id, admin_user_id)
+    assert vouchers_repo.list_receipts(conn) == []
+
+
 def test_purchase_invoice_with_items(conn, admin_user_id):
     purchase_id = vouchers_repo.insert_purchase_invoice(
         conn,

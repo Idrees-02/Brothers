@@ -38,6 +38,17 @@ def insert_invoice_item(
     return cur.lastrowid
 
 
+def delete_invoice_items(conn: sqlite3.Connection, invoice_id: int) -> None:
+    conn.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (invoice_id,))
+
+
+def update_invoice_header(conn: sqlite3.Connection, invoice_id: int, **fields) -> None:
+    set_clauses = [f"{key} = ?" for key in fields]
+    set_clauses.append("updated_at = datetime('now')")
+    values = list(fields.values()) + [invoice_id]
+    conn.execute(f"UPDATE invoices SET {', '.join(set_clauses)} WHERE id = ?", values)
+
+
 def insert_invoice_payment(
     conn: sqlite3.Connection,
     invoice_id: int,
@@ -82,6 +93,14 @@ def get_invoice(conn: sqlite3.Connection, invoice_id: int) -> dict | None:
     return {"header": header, "items": items, "payments": payments}
 
 
+def list_unpaid_invoices(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Invoices still carrying a remaining balance - status stays 'booked'
+    until record_remaining_payment collects the last fils."""
+    return conn.execute(
+        "SELECT * FROM invoices WHERE status = 'booked' ORDER BY created_at DESC"
+    ).fetchall()
+
+
 def search_invoices(conn: sqlite3.Connection, query: str) -> list[sqlite3.Row]:
     like = f"%{query}%"
     return conn.execute(
@@ -102,3 +121,100 @@ def list_invoices_between(
             ORDER BY created_at""",
         (start_date, end_date),
     ).fetchall()
+
+
+def list_all_invoices(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM invoices ORDER BY created_at DESC").fetchall()
+
+
+def get_by_invoice_no(conn: sqlite3.Connection, invoice_no: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM invoices WHERE invoice_no = ?", (invoice_no,)).fetchone()
+
+
+def get_adjacent_id(conn: sqlite3.Connection, current_id: int, direction: str) -> int | None:
+    """direction: 'previous' (next-lowest id) or 'next' (next-highest id),
+    ordered by creation order - the simplest, least surprising ordering for
+    "الفاتورة السابقة/القادمة"."""
+    if direction == "previous":
+        row = conn.execute(
+            "SELECT id FROM invoices WHERE id < ? ORDER BY id DESC LIMIT 1", (current_id,)
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id FROM invoices WHERE id > ? ORDER BY id ASC LIMIT 1", (current_id,)
+        ).fetchone()
+    return row["id"] if row else None
+
+
+def count_invoices_created_on(conn: sqlite3.Connection, work_date: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM invoices WHERE date(created_at) = date(?) AND status != 'voided'",
+        (work_date,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def list_installations_for_date(conn: sqlite3.Connection, work_date: str) -> list[sqlite3.Row]:
+    """Installation-type invoices scheduled for work_date, joined with the
+    assigned employee's name for display in the scheduling screen."""
+    return conn.execute(
+        """SELECT invoices.*, employees.full_name AS assigned_employee_name
+           FROM invoices
+           LEFT JOIN employees ON employees.id = invoices.assigned_employee_id
+           WHERE invoices.invoice_type = 'installation'
+             AND invoices.installation_date = date(?)
+             AND invoices.status != 'voided'
+           ORDER BY invoices.created_at""",
+        (work_date,),
+    ).fetchall()
+
+
+def count_installations_for_date(conn: sqlite3.Connection, work_date: str) -> int:
+    row = conn.execute(
+        """SELECT COUNT(*) AS cnt FROM invoices
+           WHERE invoice_type = 'installation' AND installation_date = date(?)
+             AND status != 'voided'""",
+        (work_date,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def assign_installer(conn: sqlite3.Connection, invoice_id: int, employee_id: int | None) -> None:
+    conn.execute(
+        "UPDATE invoices SET assigned_employee_id = ?, updated_at = datetime('now') WHERE id = ?",
+        (employee_id, invoice_id),
+    )
+    conn.commit()
+
+
+def set_installation_status(
+    conn: sqlite3.Connection,
+    invoice_id: int,
+    installation_status: str,
+    installation_date: str | None = None,
+) -> None:
+    """Updates installation_status; also updates installation_date when a
+    new one is supplied (used for postpone-with-new-date and reschedule)."""
+    if installation_date is not None:
+        conn.execute(
+            """UPDATE invoices SET installation_status = ?, installation_date = ?,
+               updated_at = datetime('now') WHERE id = ?""",
+            (installation_status, installation_date, invoice_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE invoices SET installation_status = ?, updated_at = datetime('now') WHERE id = ?",
+            (installation_status, invoice_id),
+        )
+    conn.commit()
+
+
+def clear_installation_date(conn: sqlite3.Connection, invoice_id: int) -> None:
+    """Used for 'postpone without a new date' - keeps the invoice out of any
+    specific day's schedule until someone assigns it a new date."""
+    conn.execute(
+        """UPDATE invoices SET installation_date = NULL, installation_status = 'postponed',
+           updated_at = datetime('now') WHERE id = ?""",
+        (invoice_id,),
+    )
+    conn.commit()

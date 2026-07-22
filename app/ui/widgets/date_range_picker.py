@@ -25,6 +25,10 @@ class DateRangePicker(QWidget):
         self.to_date.setDisplayFormat("yyyy-MM-dd")
         layout.addWidget(self.to_date)
 
+    def set_range(self, start: QDate, end: QDate) -> None:
+        self.from_date.setDate(start)
+        self.to_date.setDate(end)
+
     def start_date_str(self) -> str:
         return self.from_date.date().toString("yyyy-MM-dd")
 

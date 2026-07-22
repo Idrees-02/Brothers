@@ -148,3 +148,11 @@ def count_attendance_status(
         (employee_id, status, start_date, end_date),
     ).fetchone()
     return row["cnt"]
+
+
+def count_present_on_date(conn: sqlite3.Connection, work_date: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM attendance WHERE status = 'present' AND work_date = date(?)",
+        (work_date,),
+    ).fetchone()
+    return row["cnt"]

@@ -77,3 +77,71 @@ def test_void_invoice_excluded_from_range_query(conn, admin_user_id):
     assert active == []
     assert len(all_rows) == 1
     assert all_rows[0]["status"] == "voided"
+
+
+def test_count_invoices_created_on(conn, admin_user_id):
+    from datetime import date
+
+    today = date.today().isoformat()
+    _make_installation_invoice(conn, admin_user_id)
+    assert invoices_repo.count_invoices_created_on(conn, today) == 1
+    assert invoices_repo.count_invoices_created_on(conn, "2000-01-01") == 0
+
+
+def test_list_all_invoices(conn, admin_user_id):
+    _make_installation_invoice(conn, admin_user_id)
+    assert len(invoices_repo.list_all_invoices(conn)) == 1
+
+
+def test_installation_scheduling_for_date(conn, admin_user_id):
+    from datetime import date
+
+    today = date.today().isoformat()
+    invoice_id = invoices_repo.insert_invoice(
+        conn,
+        invoice_type="installation",
+        invoice_no="INST-000002",
+        customer_name="سالم",
+        phone="33335555",
+        address=None,
+        area_region="الرفاع",
+        status="booked",
+        with_installation=1,
+        subtotal_fils=10_000,
+        tax_included=0,
+        tax_rate_percent=10.0,
+        tax_amount_fils=1_000,
+        grand_total_fils=11_000,
+        deposit_fils=0,
+        installation_date=today,
+        installation_status="pending",
+        created_by_user_id=admin_user_id,
+    )
+    conn.commit()
+
+    assert invoices_repo.count_installations_for_date(conn, today) == 1
+    due_today = invoices_repo.list_installations_for_date(conn, today)
+    assert len(due_today) == 1
+    assert due_today[0]["id"] == invoice_id
+    assert due_today[0]["assigned_employee_name"] is None
+
+    from app.repositories import employees_repo
+
+    employee_id = employees_repo.create_employee(conn, "محمد", 300_000)
+    invoices_repo.assign_installer(conn, invoice_id, employee_id)
+    due_today = invoices_repo.list_installations_for_date(conn, today)
+    assert due_today[0]["assigned_employee_name"] == "محمد"
+
+    invoices_repo.set_installation_status(conn, invoice_id, "installed")
+    header = invoices_repo.get_invoice(conn, invoice_id)["header"]
+    assert header["installation_status"] == "installed"
+
+    invoices_repo.set_installation_status(conn, invoice_id, "pending", installation_date="2026-08-01")
+    header = invoices_repo.get_invoice(conn, invoice_id)["header"]
+    assert header["installation_date"] == "2026-08-01"
+    assert invoices_repo.count_installations_for_date(conn, today) == 0
+
+    invoices_repo.clear_installation_date(conn, invoice_id)
+    header = invoices_repo.get_invoice(conn, invoice_id)["header"]
+    assert header["installation_date"] is None
+    assert header["installation_status"] == "postponed"

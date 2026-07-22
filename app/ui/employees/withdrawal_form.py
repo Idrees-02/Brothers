@@ -4,6 +4,7 @@ import sqlite3
 
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDateEdit,
     QFormLayout,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
 from app.domain.money import fils_to_bhd_str
 from app.repositories import employees_repo
 from app.services import employee_service
+from app.ui.widgets.card import Card
 from app.ui.widgets.money_spinbox import MoneySpinBox
 
 
@@ -32,8 +34,15 @@ class WithdrawalScreen(QWidget):
         self._user = user
         self._employee_ids: list[int] = []
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("سحوبات الموظفين خلال الشهر"))
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        card = Card()
+        outer_layout.addWidget(card)
+        layout = card.body_layout
+
+        subtitle = QLabel("سحوبات الموظفين خلال الشهر")
+        subtitle.setObjectName("sectionSubtitle")
+        layout.addWidget(subtitle)
 
         form = QFormLayout()
         self.employee_combo = QComboBox()
@@ -63,6 +72,7 @@ class WithdrawalScreen(QWidget):
         self.table.setHorizontalHeaderLabels(["المبلغ", "التاريخ", "ملاحظات"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self.table)
 
         self._load_employees()

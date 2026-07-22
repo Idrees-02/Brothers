@@ -14,11 +14,20 @@ def test_update_settings(conn):
     assert settings["working_days_per_month"] == 24
 
 
-def test_reserve_next_number_sequential_per_type(conn):
+def test_reserve_next_number_invoices_share_one_plain_sequence(conn):
+    # Cash and installation invoices share a single plain-numbered sequence
+    # (no letters) - interleaving the two types still just counts up.
     first_cash = settings_repo.reserve_next_number(conn, "invoice", "cash")
-    second_cash = settings_repo.reserve_next_number(conn, "invoice", "cash")
     first_install = settings_repo.reserve_next_number(conn, "invoice", "installation")
+    second_cash = settings_repo.reserve_next_number(conn, "invoice", "cash")
 
-    assert first_cash == "CASH-000001"
-    assert second_cash == "CASH-000002"
-    assert first_install == "INST-000001"  # independent counter per type
+    assert first_cash == "1"
+    assert first_install == "2"
+    assert second_cash == "3"
+
+
+def test_reserve_next_number_vouchers_keep_their_prefix(conn):
+    first_expense = settings_repo.reserve_next_number(conn, "voucher", "expense")
+    second_expense = settings_repo.reserve_next_number(conn, "voucher", "expense")
+    assert first_expense == "EXP-000001"
+    assert second_expense == "EXP-000002"

@@ -24,7 +24,7 @@ CREATE TABLE users (
 
 CREATE TABLE settings (
     id                              INTEGER PRIMARY KEY CHECK (id = 1),
-    shop_name_ar                    TEXT NOT NULL DEFAULT 'الإخوة لبيع السجاد',
+    shop_name_ar                    TEXT NOT NULL DEFAULT 'الاخوين لبيع السجاد',
     shop_name_en                    TEXT NOT NULL DEFAULT 'Brothers for Selling Carpet',
     shop_phone                      TEXT,
     shop_address                    TEXT,
@@ -183,9 +183,219 @@ CREATE TABLE schema_migrations (
 );
 """
 
+# v2: receipt vouchers (سندات قبض) + installation scheduling (تاريخ التركيب,
+# حالة التركيب, الفني المسؤول). Additive only (ALTER TABLE ADD COLUMN /
+# CREATE TABLE) so it applies cleanly on top of any existing v1 database
+# without touching existing rows, plus a one-time fix-up for the shop name
+# default that shipped before the correct Arabic name was confirmed.
+SCHEMA_V2_SQL = """
+ALTER TABLE invoices ADD COLUMN installation_date TEXT;
+ALTER TABLE invoices ADD COLUMN installation_status TEXT
+    CHECK (installation_status IN ('pending','installed','postponed','cancelled'));
+ALTER TABLE invoices ADD COLUMN assigned_employee_id INTEGER REFERENCES employees(id);
+CREATE INDEX idx_invoices_installation_date ON invoices(installation_date);
+
+CREATE TABLE receipts (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    voucher_no              TEXT NOT NULL UNIQUE,
+    description             TEXT NOT NULL,
+    amount_fils             INTEGER NOT NULL,
+    receipt_date            TEXT NOT NULL,
+    note                    TEXT,
+    created_by_user_id      INTEGER NOT NULL REFERENCES users(id),
+    created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+    voided_at               TEXT,
+    voided_by_user_id       INTEGER REFERENCES users(id)
+);
+CREATE INDEX idx_receipts_date ON receipts(receipt_date);
+
+ALTER TABLE settings ADD COLUMN next_receipt_voucher_no INTEGER NOT NULL DEFAULT 1;
+
+UPDATE settings SET shop_name_ar = 'الاخوين لبيع السجاد' WHERE shop_name_ar = 'الإخوة لبيع السجاد';
+"""
+
+# v3: required payment method on invoices (cash / بنفت باي / ماستركارد / شيك).
+SCHEMA_V3_SQL = """
+ALTER TABLE invoices ADD COLUMN payment_method TEXT
+    CHECK (payment_method IN ('cash','benefit_pay','mastercard','cheque'));
+"""
+
+# v4: chart of accounts for vouchers (سندات الصرف والقبض) - lets the shop
+# track which account money moved through (cash box / bank / owner) and
+# produce a per-account statement. account_id is nullable at the DB level
+# so this migration never breaks existing rows; the service layer requires
+# it for all newly created vouchers.
+SCHEMA_V4_SQL = """
+CREATE TABLE accounts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL UNIQUE,
+    is_active       INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT INTO accounts (name) VALUES ('الصندوق النقدي'), ('البنك'), ('المالك');
+
+ALTER TABLE expenses ADD COLUMN account_id INTEGER REFERENCES accounts(id);
+ALTER TABLE receipts ADD COLUMN account_id INTEGER REFERENCES accounts(id);
+CREATE INDEX idx_expenses_account_id ON expenses(account_id);
+CREATE INDEX idx_receipts_account_id ON receipts(account_id);
+"""
+
+# v5: invoices.created_at/updated_at and invoice_payments.paid_at defaulted
+# to datetime('now'), which is UTC - every "today" boundary in the app
+# (dashboard counts, tax/financial reports) is computed from the shop's
+# local calendar day. In a timezone ahead of UTC (e.g. Bahrain, UTC+3),
+# anything recorded between local midnight and the UTC rollover got stamped
+# with the *previous* day and vanished from "today" until the report window
+# widened. Rebuilds both tables with datetime('now','localtime') defaults,
+# following SQLite's documented recreate-and-rename procedure for schema
+# changes ALTER TABLE can't express directly (changing a column default).
+SCHEMA_V5_SQL = """
+PRAGMA foreign_keys = OFF;
+
+CREATE TABLE invoices_v5 (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_type            TEXT NOT NULL CHECK (invoice_type IN ('cash','installation')),
+    invoice_no              TEXT NOT NULL UNIQUE,
+    customer_name           TEXT,
+    phone                   TEXT NOT NULL,
+    address                 TEXT,
+    area_region             TEXT,
+    status                  TEXT NOT NULL DEFAULT 'completed'
+                                CHECK (status IN ('booked','completed','voided')),
+    with_installation       INTEGER CHECK (with_installation IN (0,1)),
+    subtotal_fils           INTEGER NOT NULL,
+    tax_included             INTEGER NOT NULL DEFAULT 0 CHECK (tax_included IN (0,1)),
+    tax_rate_percent        REAL NOT NULL,
+    tax_amount_fils         INTEGER NOT NULL,
+    grand_total_fils        INTEGER NOT NULL,
+    deposit_fils            INTEGER NOT NULL DEFAULT 0,
+    created_by_user_id      INTEGER NOT NULL REFERENCES users(id),
+    created_at              TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at              TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    voided_at                TEXT,
+    voided_by_user_id       INTEGER REFERENCES users(id),
+    installation_date       TEXT,
+    installation_status     TEXT CHECK (installation_status IN ('pending','installed','postponed','cancelled')),
+    assigned_employee_id    INTEGER REFERENCES employees(id),
+    payment_method          TEXT CHECK (payment_method IN ('cash','benefit_pay','mastercard','cheque'))
+);
+
+INSERT INTO invoices_v5 (
+    id, invoice_type, invoice_no, customer_name, phone, address, area_region,
+    status, with_installation, subtotal_fils, tax_included, tax_rate_percent,
+    tax_amount_fils, grand_total_fils, deposit_fils, created_by_user_id,
+    created_at, updated_at, voided_at, voided_by_user_id,
+    installation_date, installation_status, assigned_employee_id, payment_method
+)
+SELECT
+    id, invoice_type, invoice_no, customer_name, phone, address, area_region,
+    status, with_installation, subtotal_fils, tax_included, tax_rate_percent,
+    tax_amount_fils, grand_total_fils, deposit_fils, created_by_user_id,
+    created_at, updated_at, voided_at, voided_by_user_id,
+    installation_date, installation_status, assigned_employee_id, payment_method
+FROM invoices;
+
+DROP TABLE invoices;
+ALTER TABLE invoices_v5 RENAME TO invoices;
+
+CREATE INDEX idx_invoices_customer_name ON invoices(customer_name);
+CREATE INDEX idx_invoices_phone ON invoices(phone);
+CREATE INDEX idx_invoices_status ON invoices(status);
+CREATE INDEX idx_invoices_type ON invoices(invoice_type);
+CREATE INDEX idx_invoices_created_at ON invoices(created_at);
+CREATE INDEX idx_invoices_installation_date ON invoices(installation_date);
+
+CREATE TABLE invoice_payments_v5 (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id              INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    payment_type            TEXT NOT NULL CHECK (payment_type IN ('deposit','remaining','full')),
+    amount_fils             INTEGER NOT NULL,
+    paid_at                 TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    received_by_user_id     INTEGER NOT NULL REFERENCES users(id)
+);
+
+INSERT INTO invoice_payments_v5 (id, invoice_id, payment_type, amount_fils, paid_at, received_by_user_id)
+SELECT id, invoice_id, payment_type, amount_fils, paid_at, received_by_user_id
+FROM invoice_payments;
+
+DROP TABLE invoice_payments;
+ALTER TABLE invoice_payments_v5 RENAME TO invoice_payments;
+CREATE INDEX idx_invoice_payments_invoice_id ON invoice_payments(invoice_id);
+
+PRAGMA foreign_keys = ON;
+"""
+
+# v6: inventory (المخزون) - items with a denormalized quantity_on_hand for
+# cheap listing, plus stock_movements as the append-only audit trail
+# explaining every change (سند إدخال / سند إخراج, or an automatic 'sale'
+# movement when an invoice line item matches an inventory item by name).
+SCHEMA_V6_SQL = """
+CREATE TABLE items (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                TEXT NOT NULL UNIQUE,
+    unit                TEXT NOT NULL DEFAULT 'piece' CHECK (unit IN ('piece','sqm')),
+    unit_price_fils     INTEGER NOT NULL DEFAULT 0,
+    quantity_on_hand    REAL NOT NULL DEFAULT 0,
+    is_active           INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+    created_at          TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE stock_movements (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    voucher_no              TEXT NOT NULL UNIQUE,
+    movement_type           TEXT NOT NULL CHECK (movement_type IN ('in','out')),
+    item_id                 INTEGER NOT NULL REFERENCES items(id),
+    quantity                REAL NOT NULL,
+    reason                  TEXT,
+    note                    TEXT,
+    movement_date           TEXT NOT NULL,
+    source                  TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','sale')),
+    reference_invoice_id    INTEGER REFERENCES invoices(id),
+    created_by_user_id      INTEGER NOT NULL REFERENCES users(id),
+    created_at              TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    voided_at               TEXT,
+    voided_by_user_id       INTEGER REFERENCES users(id)
+);
+CREATE INDEX idx_stock_movements_item_id ON stock_movements(item_id);
+CREATE INDEX idx_stock_movements_date ON stock_movements(movement_date);
+
+ALTER TABLE settings ADD COLUMN next_stock_in_voucher_no INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE settings ADD COLUMN next_stock_out_voucher_no INTEGER NOT NULL DEFAULT 1;
+"""
+
+# v7: tax on purchase invoices, matching how sales invoices already snapshot
+# subtotal/rate/tax amount alongside the grand total (kept as
+# total_amount_fils for backward compatibility with existing report
+# queries). Historical rows default to 0/0% since the pre-tax split can't be
+# reconstructed retroactively - only new purchases populate these correctly.
+SCHEMA_V7_SQL = """
+ALTER TABLE purchase_invoices ADD COLUMN subtotal_fils INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE purchase_invoices ADD COLUMN tax_included INTEGER NOT NULL DEFAULT 0 CHECK (tax_included IN (0,1));
+ALTER TABLE purchase_invoices ADD COLUMN tax_rate_percent REAL NOT NULL DEFAULT 0;
+ALTER TABLE purchase_invoices ADD COLUMN tax_amount_fils INTEGER NOT NULL DEFAULT 0;
+"""
+
+# v8: one shared plain-numbered sequence for both invoice types (cash and
+# installation invoices used to have separate CASH-/INST- prefixed counters;
+# now every invoice - regardless of type - just gets the next number in a
+# single sequence, e.g. 1, 2, 3, ...). The old next_cash_invoice_no /
+# next_installation_invoice_no columns are left in place, just unused.
+SCHEMA_V8_SQL = """
+ALTER TABLE settings ADD COLUMN next_invoice_no INTEGER NOT NULL DEFAULT 1;
+"""
+
 # Ordered list of (version, sql) pairs applied in sequence by migrations.py.
 # Add new (version, sql) tuples here for future schema changes - never edit
-# SCHEMA_V1_SQL after it has shipped.
+# a SCHEMA_VN_SQL string after it has shipped, since existing databases at
+# that version will never re-run it.
 MIGRATIONS: list[tuple[int, str]] = [
     (1, SCHEMA_V1_SQL),
+    (2, SCHEMA_V2_SQL),
+    (3, SCHEMA_V3_SQL),
+    (4, SCHEMA_V4_SQL),
+    (5, SCHEMA_V5_SQL),
+    (6, SCHEMA_V6_SQL),
+    (7, SCHEMA_V7_SQL),
+    (8, SCHEMA_V8_SQL),
 ]

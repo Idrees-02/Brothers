@@ -32,6 +32,7 @@ def test_historical_invoice_keeps_original_rate(conn):
         phone="33330000",
         items=[{"description": "سجادة", "quantity": 1, "unit_price_fils": 10_000}],
         tax_included=False,
+        payment_method="cash",
         override_password_prompt=lambda: None,
     )
     settings_service.update_shop_settings(conn, admin, tax_rate_percent=20.0)
@@ -47,6 +48,7 @@ def test_historical_invoice_keeps_original_rate(conn):
         phone="33331111",
         items=[{"description": "سجادة", "quantity": 1, "unit_price_fils": 10_000}],
         tax_included=False,
+        payment_method="cash",
         override_password_prompt=lambda: None,
     )
     new_invoice = invoices_repo.get_invoice(conn, new_invoice_id)["header"]

@@ -7,7 +7,7 @@ gating Settings behind itself would be circular.
 import sqlite3
 
 from app.domain.auth import hash_password
-from app.repositories import settings_repo, users_repo
+from app.repositories import accounts_repo, settings_repo, users_repo
 
 
 class NotAuthorized(Exception):
@@ -70,3 +70,15 @@ def update_override_password(conn: sqlite3.Connection, admin_user: sqlite3.Row, 
     if not new_password:
         raise ValueError("كلمة مرور التجاوز مطلوبة")
     settings_repo.update_override_password(conn, hash_password(new_password))
+
+
+def create_account(conn: sqlite3.Connection, admin_user: sqlite3.Row, name: str) -> int:
+    _require_admin(admin_user)
+    if not name:
+        raise ValueError("اسم الحساب مطلوب")
+    return accounts_repo.create_account(conn, name)
+
+
+def deactivate_account(conn: sqlite3.Connection, admin_user: sqlite3.Row, account_id: int) -> None:
+    _require_admin(admin_user)
+    accounts_repo.set_active(conn, account_id, False)
