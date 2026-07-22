@@ -41,6 +41,7 @@ from app.services import invoice_service
 from app.ui.invoices.invoice_print import export_invoice_pdf, show_print_dialog
 from app.ui.widgets.account_combo import AccountCombo
 from app.ui.widgets.card import Card, scrollable
+from app.ui.widgets.compact_form import expand_width as _expand
 from app.ui.widgets.compact_form import labeled_field as _labeled
 from app.ui.widgets.dirty_tracker import DirtyTracker
 from app.ui.widgets.line_items_table import LineItemsTable
@@ -74,18 +75,48 @@ class CashInvoiceForm(QWidget):
         form = QVBoxLayout()
         form.setSpacing(12)
 
+        # Row 1: customer identity/classification, spread edge-to-edge.
         self.customer_name_input = QLineEdit()
         self.customer_name_input.setPlaceholderText("اختياري - يُملأ تلقائياً بـ \"نقدي\"")
-        self.phone_input = QLineEdit()
-        self.area_region_input = QLineEdit()
+        self.account_combo = AccountCombo(conn, allow_empty=True)
+        _expand(self.account_combo)
+        self.invoice_kind_combo = QComboBox()
+        self.invoice_kind_combo.addItem("نقدا", False)
+        self.invoice_kind_combo.addItem("آجل", True)
+        _expand(self.invoice_kind_combo)
         identity_row = QHBoxLayout()
-        identity_row.addLayout(_labeled("اسم الزبون", self.customer_name_input))
-        identity_row.addLayout(_labeled("رقم الهاتف *", self.phone_input))
-        identity_row.addLayout(_labeled("المنطقة (للتوصيل)", self.area_region_input))
+        identity_row.addLayout(_labeled("اسم الزبون", self.customer_name_input), 1)
+        identity_row.addLayout(_labeled("الحساب", self.account_combo), 1)
+        identity_row.addLayout(_labeled("نوع الفاتورة", self.invoice_kind_combo), 1)
         form.addLayout(identity_row)
 
+        # Row 2: contact details, spread edge-to-edge.
+        self.phone_input = QLineEdit()
         self.address_input = QLineEdit()
-        form.addLayout(_labeled("العنوان (للتوصيل)", self.address_input))
+        self.area_region_input = QLineEdit()
+        contact_row = QHBoxLayout()
+        contact_row.addLayout(_labeled("رقم الهاتف *", self.phone_input), 1)
+        contact_row.addLayout(_labeled("العنوان (للتوصيل)", self.address_input), 1)
+        contact_row.addLayout(_labeled("المنطقة (للتوصيل)", self.area_region_input), 1)
+        form.addLayout(contact_row)
+
+        # Row 3: delivery/tax toggles, spread edge-to-edge.
+        self.with_delivery_checkbox = QCheckBox("مع التوصيل")
+        self.with_delivery_checkbox.toggled.connect(self._on_delivery_toggled)
+        self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
+        self.tax_included_checkbox.stateChanged.connect(self._on_tax_included_changed)
+        self.tax_rate_input = QDoubleSpinBox()
+        self.tax_rate_input.setDecimals(2)
+        self.tax_rate_input.setRange(0.0, 100.0)
+        self.tax_rate_input.setSuffix(" %")
+        _expand(self.tax_rate_input)
+        self.tax_rate_input.setValue(settings_repo.get_settings(conn)["tax_rate_percent"])
+        self.tax_rate_input.valueChanged.connect(self._update_remaining_preview)
+        toggles_row = QHBoxLayout()
+        toggles_row.addWidget(self.with_delivery_checkbox, 1)
+        toggles_row.addWidget(self.tax_included_checkbox, 1)
+        toggles_row.addLayout(_labeled("نسبة الضريبة", self.tax_rate_input), 1)
+        form.addLayout(toggles_row)
 
         layout.addLayout(form)
 
@@ -94,55 +125,27 @@ class CashInvoiceForm(QWidget):
         self.items_table.items_changed.connect(self._update_remaining_preview)
         layout.addWidget(self.items_table)
 
-        # Deposit/delivery/payment details all live in one compact row below
-        # the items table (and its add/remove buttons).
+        # Last row: discount, deposit, payment method, and the
+        # delivery/installation date - spread edge-to-edge below the items
+        # table (and its add/remove buttons).
+        self.discount_input = MoneySpinBox()
+        _expand(self.discount_input)
+        self.discount_input.valueChanged.connect(self._update_remaining_preview)
         self.deposit_input = MoneySpinBox()
-        self.deposit_input.setMaximumWidth(240)
+        _expand(self.deposit_input)
         self.deposit_input.valueChanged.connect(self._update_remaining_preview)
-        self.with_delivery_checkbox = QCheckBox("مع التوصيل")
-        self.with_delivery_checkbox.toggled.connect(self._on_delivery_toggled)
+        self.payment_method_combo = PaymentMethodCombo()
+        _expand(self.payment_method_combo)
         self.delivery_date_input = QDateEdit(QDate.currentDate())
-        self.delivery_date_input.setMaximumWidth(240)
+        _expand(self.delivery_date_input)
         self.delivery_date_input.setCalendarPopup(True)
         self.delivery_date_input.setDisplayFormat("yyyy-MM-dd")
         self.delivery_date_input.setEnabled(False)
-        self.payment_method_combo = PaymentMethodCombo()
-        self.payment_method_combo.setMaximumWidth(240)
-        self.tax_included_checkbox = QCheckBox("المبلغ شامل الضريبة")
-        self.tax_included_checkbox.stateChanged.connect(self._on_tax_included_changed)
-        details_row = QHBoxLayout()
-        details_row.addLayout(_labeled("المقدم (المبلغ المدفوع)", self.deposit_input))
-        details_row.addWidget(self.with_delivery_checkbox)
-        details_row.addLayout(_labeled("تاريخ التوصيل", self.delivery_date_input))
-        details_row.addLayout(_labeled("طريقة الدفع *", self.payment_method_combo))
-        details_row.addWidget(self.tax_included_checkbox)
-        details_row.addStretch()
-        layout.addLayout(details_row)
-
-        # Second billing row: discount, per-invoice tax rate, cash/credit
-        # kind, and the account the invoice belongs to.
-        self.discount_input = MoneySpinBox()
-        self.discount_input.setMaximumWidth(240)
-        self.discount_input.valueChanged.connect(self._update_remaining_preview)
-        self.tax_rate_input = QDoubleSpinBox()
-        self.tax_rate_input.setDecimals(2)
-        self.tax_rate_input.setRange(0.0, 100.0)
-        self.tax_rate_input.setSuffix(" %")
-        self.tax_rate_input.setMaximumWidth(120)
-        self.tax_rate_input.setValue(settings_repo.get_settings(conn)["tax_rate_percent"])
-        self.tax_rate_input.valueChanged.connect(self._update_remaining_preview)
-        self.invoice_kind_combo = QComboBox()
-        self.invoice_kind_combo.addItem("نقدا", False)
-        self.invoice_kind_combo.addItem("آجل", True)
-        self.invoice_kind_combo.setMaximumWidth(120)
-        self.account_combo = AccountCombo(conn, allow_empty=True)
-        self.account_combo.setMaximumWidth(240)
         billing_row = QHBoxLayout()
-        billing_row.addLayout(_labeled("التخفيض", self.discount_input))
-        billing_row.addLayout(_labeled("نسبة الضريبة", self.tax_rate_input))
-        billing_row.addLayout(_labeled("نوع الفاتورة", self.invoice_kind_combo))
-        billing_row.addLayout(_labeled("الحساب", self.account_combo))
-        billing_row.addStretch()
+        billing_row.addLayout(_labeled("التخفيض", self.discount_input), 1)
+        billing_row.addLayout(_labeled("المقدم (المبلغ المدفوع)", self.deposit_input), 1)
+        billing_row.addLayout(_labeled("طريقة الدفع *", self.payment_method_combo), 1)
+        billing_row.addLayout(_labeled("تاريخ التوصيل", self.delivery_date_input), 1)
         layout.addLayout(billing_row)
 
         self.remaining_preview_label = QLabel()

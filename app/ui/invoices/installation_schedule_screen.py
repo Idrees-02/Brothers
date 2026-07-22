@@ -28,7 +28,12 @@ from PySide6.QtWidgets import (
 from app.domain.money import fils_to_bhd_str
 from app.repositories import employees_repo, invoices_repo, settings_repo
 from app.services import invoice_service
-from app.ui.vouchers.voucher_print import build_report_html, data_table_fragment, show_print_dialog_html
+from app.ui.vouchers.voucher_print import (
+    build_report_html,
+    data_table_fragment,
+    key_value_table_fragment,
+    show_print_dialog_html,
+)
 from app.ui.widgets.card import Card
 from app.ui.widgets.money_spinbox import MoneySpinBox
 from app.ui.widgets.override_dialog import prompt_override_password
@@ -262,27 +267,39 @@ class InstallationScheduleScreen(QWidget):
 
         sections = []
         for name in ordered_names:
-            sections.append(f"<h3>الفني: {name}</h3>")
-            sections.append(
-                data_table_fragment(
-                    ["رقم الفاتورة", "النوع", "الزبون", "الهاتف", "المنطقة", "العنوان",
-                     "الإجمالي", "المتبقي", "الحالة"],
-                    [
-                        [
-                            row["invoice_no"],
-                            _kind_label(row),
-                            row["customer_name"] or "",
-                            row["phone"],
-                            row["area_region"] or "",
-                            row["address"] or "",
-                            f"{fils_to_bhd_str(row['grand_total_fils'])} د.ب",
-                            f"{fils_to_bhd_str(max(0, row['grand_total_fils'] - paid_by_invoice.get(row['id'], 0)))} د.ب",
-                            _STATUS_LABEL.get(row["installation_status"], ""),
-                        ]
-                        for row in groups[name]
-                    ],
+            sections.append(f"<h2>الفني: {name}</h2>")
+            for row in groups[name]:
+                remaining = max(0, row["grand_total_fils"] - paid_by_invoice.get(row["id"], 0))
+                sections.append(
+                    f"<h3>فاتورة {row['invoice_no']} ({_kind_label(row)}) - {row['customer_name'] or ''}</h3>"
                 )
-            )
+                sections.append(
+                    key_value_table_fragment(
+                        [
+                            ("الهاتف", row["phone"]),
+                            ("المنطقة", row["area_region"] or ""),
+                            ("العنوان", row["address"] or ""),
+                            ("الإجمالي", f"{fils_to_bhd_str(row['grand_total_fils'])} د.ب"),
+                            ("المتبقي", f"{fils_to_bhd_str(remaining)} د.ب"),
+                            ("الحالة", _STATUS_LABEL.get(row["installation_status"], "")),
+                        ]
+                    )
+                )
+                items = invoices_repo.get_invoice(self._conn, row["id"])["items"]
+                sections.append(
+                    data_table_fragment(
+                        ["الصنف", "الكمية", "سعر الوحدة", "الإجمالي"],
+                        [
+                            [
+                                item["description"],
+                                str(item["quantity"]),
+                                f"{fils_to_bhd_str(item['unit_price_fils'])} د.ب",
+                                f"{fils_to_bhd_str(item['line_total_fils'])} د.ب",
+                            ]
+                            for item in items
+                        ],
+                    )
+                )
 
         if self.pending_only_checkbox.isChecked():
             title = "كشف التركيبات المعلقة (بدون تاريخ) حسب الفني"
